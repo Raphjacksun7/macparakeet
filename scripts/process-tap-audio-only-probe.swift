@@ -15,11 +15,15 @@ private enum ProbeError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .badArguments:
-            return "usage: process-tap-probe --output RESULT.json --tone TONE.wav"
+            return
+                "usage: process-tap-probe --output RESULT.json --tone TONE.wav "
+                + "[--cycles N] [--tone-duration-seconds N]"
         case let .osStatus(stage, status):
             return "\(stage) failed: OSStatus \(status) (\(fourCC(status)))"
         case let .unsupportedFormat(format):
-            return "unsupported tap format: id=\(format.mFormatID) flags=\(format.mFormatFlags) bits=\(format.mBitsPerChannel)"
+            return
+                "unsupported tap format: id=\(format.mFormatID) "
+                + "flags=\(format.mFormatFlags) bits=\(format.mBitsPerChannel)"
         case .noFrames:
             return "the process tap delivered no audio frames"
         case let .signalTooQuiet(rms, targetAmplitude):
@@ -137,7 +141,8 @@ private final class SignalAccumulator: @unchecked Sendable {
             sumSquares += sample * sample
             if absolute > peak { peak = absolute }
 
-            let phase = 2.0 * Double.pi * targetFrequency
+            let phase =
+                2.0 * Double.pi * targetFrequency
                 * Double(startFrame + UInt64(frame)) / sampleRate
             targetReal += sample * cos(phase)
             targetImaginary -= sample * sin(phase)
@@ -297,7 +302,8 @@ private func writeDeterministicTone(
     for frame in 0..<frameCount {
         let envelopeFrames = min(frame, frameCount - 1 - frame)
         let envelope = min(Double(envelopeFrames) / 480.0, 1.0)
-        let value = sin(2.0 * Double.pi * frequency * Double(frame) / Double(sampleRate))
+        let value =
+            sin(2.0 * Double.pi * frequency * Double(frame) / Double(sampleRate))
             * amplitude * envelope
         let sample = Int16(clamping: Int(value * Double(Int16.max)))
         for _ in 0..<channels { appendUInt16(UInt16(bitPattern: sample)) }
@@ -308,14 +314,45 @@ private func writeDeterministicTone(
 private struct Arguments {
     let output: URL
     let tone: URL
+    let cycles: Int
+    let toneDurationSeconds: Double
 
     init(_ arguments: [String]) throws {
-        guard arguments.count == 5,
-            arguments[1] == "--output",
-            arguments[3] == "--tone"
-        else { throw ProbeError.badArguments }
-        output = URL(fileURLWithPath: arguments[2])
-        tone = URL(fileURLWithPath: arguments[4])
+        var output: URL?
+        var tone: URL?
+        var cycles = 1
+        var toneDurationSeconds = 2.0
+        var index = 1
+
+        while index < arguments.count {
+            guard index + 1 < arguments.count else { throw ProbeError.badArguments }
+            let value = arguments[index + 1]
+            switch arguments[index] {
+            case "--output":
+                output = URL(fileURLWithPath: value)
+            case "--tone":
+                tone = URL(fileURLWithPath: value)
+            case "--cycles":
+                guard let parsed = Int(value), parsed > 0, parsed <= 100 else {
+                    throw ProbeError.badArguments
+                }
+                cycles = parsed
+            case "--tone-duration-seconds":
+                guard let parsed = Double(value), parsed >= 0.25, parsed <= 300 else {
+                    throw ProbeError.badArguments
+                }
+                toneDurationSeconds = parsed
+            default:
+                throw ProbeError.badArguments
+            }
+            index += 2
+        }
+
+        guard let output, let tone else { throw ProbeError.badArguments }
+        self.output = output
+        self.tone = tone
+        self.cycles = cycles
+        self.toneDurationSeconds = toneDurationSeconds
     }
 }
 
@@ -337,66 +374,104 @@ private enum Main {
             Foundation.exit(64)
         }
 
-        let probe = AudioOnlyProcessTapProbe()
         var result: [String: Any] = [
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "startedAt": startedAt,
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "targetFrequencyHz": targetFrequency,
+            "requestedCycles": arguments.cycles,
+            "toneDurationSeconds": arguments.toneDurationSeconds,
             "microphoneRequested": false,
             "screenPixelsRequested": false,
             "captureAPI": "CoreAudio AudioHardwareCreateProcessTap",
         ]
 
         do {
-            try writeDeterministicTone(to: arguments.tone, frequency: targetFrequency)
-            try probe.start(targetFrequency: targetFrequency)
-            defer { probe.stop() }
+            try writeDeterministicTone(
+                to: arguments.tone,
+                durationSeconds: arguments.toneDurationSeconds,
+                frequency: targetFrequency
+            )
 
-            Thread.sleep(forTimeInterval: 0.5)
-            let player = Process()
-            player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
-            player.arguments = [arguments.tone.path]
-            try player.run()
-            player.waitUntilExit()
-            guard player.terminationStatus == 0 else {
-                throw ProbeError.osStatus(
-                    stage: "play deterministic tone",
-                    status: OSStatus(player.terminationStatus)
-                )
-            }
-            Thread.sleep(forTimeInterval: 0.5)
-            probe.stop()
+            var cycleResults: [[String: Any]] = []
+            var totalCallbacks: UInt64 = 0
+            var totalFrames: UInt64 = 0
+            var totalAnalyzedSamples: UInt64 = 0
+            var minimumRMS = Double.greatestFiniteMagnitude
+            var minimumTargetAmplitude = Double.greatestFiniteMagnitude
+            var maximumPeak = 0.0
 
-            guard let metrics = probe.accumulator, metrics.frames > 0 else {
-                throw ProbeError.noFrames
-            }
-            guard metrics.rms >= 0.005, metrics.targetAmplitude >= 0.005 else {
-                throw ProbeError.signalTooQuiet(
-                    rms: metrics.rms,
-                    targetAmplitude: metrics.targetAmplitude
-                )
+            for cycle in 1...arguments.cycles {
+                let probe = AudioOnlyProcessTapProbe()
+                do {
+                    try probe.start(targetFrequency: targetFrequency)
+                    Thread.sleep(forTimeInterval: 0.25)
+
+                    let player = Process()
+                    player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+                    player.arguments = [arguments.tone.path]
+                    try player.run()
+                    player.waitUntilExit()
+                    guard player.terminationStatus == 0 else {
+                        throw ProbeError.osStatus(
+                            stage: "play deterministic tone in cycle \(cycle)",
+                            status: OSStatus(player.terminationStatus)
+                        )
+                    }
+                    Thread.sleep(forTimeInterval: 0.25)
+                    probe.stop()
+                } catch {
+                    probe.stop()
+                    throw error
+                }
+
+                guard let metrics = probe.accumulator, metrics.frames > 0 else {
+                    throw ProbeError.noFrames
+                }
+                guard metrics.rms >= 0.005, metrics.targetAmplitude >= 0.005 else {
+                    throw ProbeError.signalTooQuiet(
+                        rms: metrics.rms,
+                        targetAmplitude: metrics.targetAmplitude
+                    )
+                }
+
+                let format = probe.streamFormat
+                cycleResults.append([
+                    "cycle": cycle,
+                    "defaultOutputUID": probe.outputUID,
+                    "sampleRateHz": format.mSampleRate,
+                    "channels": format.mChannelsPerFrame,
+                    "formatFlags": format.mFormatFlags,
+                    "callbacks": metrics.callbacks,
+                    "capturedFrames": metrics.frames,
+                    "analyzedSamples": metrics.analyzedSamples,
+                    "rms": metrics.rms,
+                    "peak": metrics.peak,
+                    "targetAmplitude": metrics.targetAmplitude,
+                ])
+                totalCallbacks += metrics.callbacks
+                totalFrames += metrics.frames
+                totalAnalyzedSamples += metrics.analyzedSamples
+                minimumRMS = min(minimumRMS, metrics.rms)
+                minimumTargetAmplitude = min(minimumTargetAmplitude, metrics.targetAmplitude)
+                maximumPeak = max(maximumPeak, metrics.peak)
             }
 
-            let format = probe.streamFormat
             result.merge([
                 "status": "PASS",
                 "permissionOutcome": "process_tap_created",
-                "defaultOutputUID": probe.outputUID,
-                "sampleRateHz": format.mSampleRate,
-                "channels": format.mChannelsPerFrame,
-                "formatFlags": format.mFormatFlags,
-                "callbacks": metrics.callbacks,
-                "capturedFrames": metrics.frames,
-                "analyzedSamples": metrics.analyzedSamples,
-                "rms": metrics.rms,
-                "peak": metrics.peak,
-                "targetAmplitude": metrics.targetAmplitude,
+                "completedCycles": cycleResults.count,
+                "callbacks": totalCallbacks,
+                "capturedFrames": totalFrames,
+                "analyzedSamples": totalAnalyzedSamples,
+                "minimumCycleRMS": minimumRMS,
+                "peak": maximumPeak,
+                "minimumCycleTargetAmplitude": minimumTargetAmplitude,
+                "cycles": cycleResults,
             ]) { _, new in new }
             try writeResult(result, to: arguments.output)
             print(arguments.output.path)
         } catch {
-            probe.stop()
             result.merge([
                 "status": "FAIL",
                 "permissionOutcome": "unknown_or_denied",

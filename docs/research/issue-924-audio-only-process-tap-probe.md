@@ -31,6 +31,19 @@ is `SAFE-TO-TEST` evidence only. Product integration still requires maintainer
 agreement, permission UX design, fallback policy, device/route coverage, and
 reproduction of the previously documented VPIO conflict boundary.
 
+By default the probe performs one create/capture/destroy cycle. Repeated cycles
+exercise teardown and re-creation in the same process, so a later cycle exposes
+stale aggregate-device or process-tap state instead of process exit hiding it:
+
+```bash
+MACPARAKEET_PROCESS_TAP_PROBE_CYCLES=20 \
+MACPARAKEET_PROCESS_TAP_PROBE_DEADLINE_SECONDS=90 \
+scripts/run-process-tap-audio-only-probe.sh /absolute/output/directory
+```
+
+`result.json` retains per-cycle format and signal measurements and requires
+every requested cycle to capture the generated tone above the declared floors.
+
 ## 2026-09-16 result
 
 The probe passed twice as a fresh process on one physical Apple Silicon host:
@@ -54,3 +67,20 @@ permission migration for MacParakeet's signed app, coexistence with VPIO,
 long-run stability, route/device changes, sleep/wake recovery, or support on
 other macOS releases. `permissionOutcome: process_tap_created` records API
 success, not a claim about which consent UI the user saw.
+
+## 2026-09-17 same-process lifecycle result
+
+The probe then completed 20 tap/aggregate create, capture, stop, and destroy
+cycles in one process on the same physical host. All 20 cycles captured the
+997 Hz tone and retained the same 48 kHz, stereo Float32 format and
+`BuiltInSpeakerDevice` clock source:
+
+| Cycles | Failed | Total frames | Frames/cycle min–max | Minimum RMS | Minimum 997 Hz amplitude |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 | 0 | 2,949,120 | 129,536–160,768 | 0.190588 | 0.207932 |
+
+Because the cycles run without exiting the probe process, a broken teardown
+that prevents a subsequent process tap or aggregate device from delivering
+audio fails the next cycle. This adds bounded lifecycle evidence; it does not
+establish long-duration stability or prove that Core Audio has removed every
+internal object immediately after each public destroy call.
