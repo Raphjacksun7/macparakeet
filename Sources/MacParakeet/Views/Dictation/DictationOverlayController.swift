@@ -149,9 +149,12 @@ final class DictationOverlayController: DictationOverlayControlling {
         }
 
         let panelWidth = bounds.width
-        // Dictation recording: 7pt side inset + 22 cancel + 12 + 36 timer + 12
-        // + 64 waveform + 12 + 23 stop + 7 ≈ 195. Must stay in sync with
-        // `DictationOverlayView` recording padding or hover zones drift.
+        // Dictation persistent recording: 7pt side inset + 22 cancel + 12 + 36
+        // timer + 12 + 64 waveform + 12 + 23 stop + 7 ≈ 195. Must stay in sync
+        // with `DictationOverlayView` recording padding or hover zones drift.
+        // Command persistent recording is a wider text card; this 195/36 math
+        // is the same pre-existing approximation (was 210/45) and is not
+        // claimed to fit that layout.
         let pillWidth: CGFloat = 195
         let pillLeft = (panelWidth - pillWidth) / 2
         let pillRight = pillLeft + pillWidth

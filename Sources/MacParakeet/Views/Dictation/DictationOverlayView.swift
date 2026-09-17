@@ -316,10 +316,12 @@ struct DictationOverlayView: View {
             // circles, reinforcing that `.ready` is a brief, poised pause
             // rather than active work.
             //
-            // Dictation recording (cancel + timer + waveform + stop) uses the
-            // same 7pt side inset as the vertical padding so the 22pt circles
-            // sit in the capsule hemispheres instead of floating in 16pt of
-            // side chrome. Command recording keeps 16pt — it's a text card.
+            // Dictation recording uses the same 7pt side inset as the vertical
+            // padding. Persistent mode: 22pt cancel/stop sit in the capsule
+            // hemispheres instead of floating in 16pt of side chrome.
+            // Hold-to-talk has no end circles, so 16pt sides would look even
+            // emptier around the compact dot+timer+waveform cluster — same 7pt.
+            // Command recording keeps 16pt — it's a text card.
             let isDictationRecording: Bool = {
                 guard case .recording = viewModel.state else { return false }
                 return viewModel.sessionKind != .command
