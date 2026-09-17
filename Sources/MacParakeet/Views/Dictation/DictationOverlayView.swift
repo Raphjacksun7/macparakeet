@@ -315,10 +315,20 @@ struct DictationOverlayView: View {
             // smaller and lighter than the 46×46 processing / noSpeech
             // circles, reinforcing that `.ready` is a brief, poised pause
             // rather than active work.
+            //
+            // Dictation recording (cancel + timer + waveform + stop) uses the
+            // same 7pt side inset as the vertical padding so the 22pt circles
+            // sit in the capsule hemispheres instead of floating in 16pt of
+            // side chrome. Command recording keeps 16pt — it's a text card.
+            let isDictationRecording: Bool = {
+                guard case .recording = viewModel.state else { return false }
+                return viewModel.sessionKind != .command
+            }()
             let horizontalPadding: CGFloat = {
                 if isReady { return 7 }
                 if isIconOnly { return 10 }
                 if isNoSpeechExpanded { return 10 }
+                if isDictationRecording { return 7 }
                 return 16
             }()
             let verticalPadding: CGFloat = {

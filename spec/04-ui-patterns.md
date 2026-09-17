@@ -494,7 +494,7 @@ Compact dark pill overlay, always-on-top, bottom-center of screen. This is the p
 
 - **Height:** 36px
 - **Corner radius:** 18px (fully rounded)
-- **Width:** Dynamic, fits content + 16px horizontal padding
+- **Width:** Dynamic, fits content. Dictation recording uses 7pt horizontal padding (matching the 7pt vertical inset) so cancel/stop sit in the capsule hemispheres. Other wide states (command recording, cancelled, processing-with-copy) keep 16pt.
 - **Position:** Bottom-center of main screen, 48px from bottom edge
 - **Background:** `#1C1C1E` (system dark) at 95% opacity
 - **Shadow:** 0 4px 12px rgba(0,0,0,0.3)
