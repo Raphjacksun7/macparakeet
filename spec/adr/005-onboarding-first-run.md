@@ -86,4 +86,4 @@ Accessibility is still granted during onboarding for all users, which also cover
 
 ## Amendment — 2026-09-16: Microphone may be skipped (issue #879)
 
-The Microphone step stays in onboarding, but Continue is no longer gated on grant. Dictation and mic-backed meetings request access on first use; dictation prompts before capture so the same press can continue. Settings offers Grant or Open Microphone Settings when the mic is missing. Idle launch prewarm is skipped when the mic is not granted. Accessibility remains required.
+The Microphone step stays in onboarding, but Continue is no longer gated on grant. Dictation and mic-backed meetings request access on first use; persistent dictation prompts before capture so the same press can continue. Hold-to-talk cannot survive the system permission sheet, so a grant returns to idle and the next hold starts capture. Settings offers Grant or Open Microphone Settings when the mic is missing. Idle launch prewarm is skipped when the mic is not granted. Accessibility remains required.

@@ -129,6 +129,34 @@ final class DictationFlowCoordinatorTests: XCTestCase {
         }
     }
 
+    func testHoldToTalkMicGrantDoesNotStartCapture() async throws {
+        let harness = try await makeMicPermissionHarness(
+            microphonePermission: .notDetermined,
+            requestMicResult: true
+        )
+
+        harness.coordinator.startDictation(mode: .holdToTalk, trigger: .hotkey)
+
+        let requestedPermission = await waitUntil {
+            harness.permissionService.requestMicrophonePermissionCallCount == 1
+        }
+        XCTAssertTrue(requestedPermission)
+        XCTAssertEqual(harness.permissionService.microphonePermission, .granted)
+
+        let returnedToIdle = await waitUntil {
+            harness.coordinator.flowStateForTesting == .idle
+        }
+        XCTAssertTrue(returnedToIdle)
+        let startCaptureCalled = await harness.audio.startCaptureCalled
+        XCTAssertFalse(
+            startCaptureCalled,
+            "The system mic sheet interrupts a hold; capture must wait for the next hold"
+        )
+        if case .error = harness.coordinator.overlayStateForTesting {
+            XCTFail("A successful hold-to-talk grant should not show a start-failure overlay")
+        }
+    }
+
     func testMenuBarPreferenceMatchesStateMachineIntent() {
         XCTAssertEqual(DictationFlowCoordinator.menuBarPreference(for: .startingService(mode: .persistent)), .recording)
         XCTAssertEqual(DictationFlowCoordinator.menuBarPreference(for: .recording(mode: .holdToTalk)), .recording)

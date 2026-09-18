@@ -536,6 +536,14 @@ final class DictationFlowCoordinator {
                     let microphoneReady = await self.ensureMicrophonePermissionForStart()
                     guard !Task.isCancelled else { return }
                     if microphoneReady {
+                        if case .checkingEntitlements(mode: .holdToTalk) = self.stateMachine.state {
+                            // The TCC sheet interrupts the hold. Starting capture
+                            // here orphans a hold-to-talk session if the key-up
+                            // was delivered to the sheet. Keep the grant; the
+                            // next hold starts immediately.
+                            self.sendEvent(.stopRequested)
+                            return
+                        }
                         self.sendEvent(.entitlementsGranted(generation: gen))
                     } else {
                         self.sendEvent(
