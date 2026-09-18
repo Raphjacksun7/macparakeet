@@ -616,6 +616,9 @@ final class DictationFlowCoordinator {
             )
             let normalPasteText = appendsTrailingSpace ? transcript + " " : transcript
             let insertText = action == nil ? normalPasteText : transcript
+            // IME/Reduce Motion are sampled once at dispatch. A layout switch
+            // during the short stream is accepted risk; paste remains the fallback
+            // when capability is unknown.
             let shouldStream = self.runtimePreferences.dictationStreamingCursorEnabled
                 && !self.shouldReduceMotion()
                 && self.inputSourceAllowsStreaming()
@@ -1214,7 +1217,7 @@ final class DictationFlowCoordinator {
                     _ = await clipboardService.copyToClipboard(insertText)
                 }
                 if let action {
-                    try? await Task.sleep(for: StreamingCursorPolicy.settleDuration)
+                    try? await Task.sleep(for: .milliseconds(200))
                     if Task.isCancelled { return }
                     let keystrokeFired = try await clipboardService.pasteTextWithAction(
                         "",

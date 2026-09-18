@@ -26,8 +26,9 @@ public enum StreamingCursorPolicy: Sendable {
     }
 
     /// Non-ASCII-capable IMEs may ignore Unicode HID payloads and treat keycode 0 as `a`.
+    /// Unknown capability fails closed to paste.
     public static func inputSourceAllowsStreaming(asciiCapable: Bool?) -> Bool {
-        asciiCapable ?? true
+        asciiCapable ?? false
     }
 }
 

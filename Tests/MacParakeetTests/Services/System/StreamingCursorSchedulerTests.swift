@@ -68,8 +68,8 @@ final class StreamingCursorSchedulerTests: XCTestCase {
         XCTAssertEqual(schedule.remainingText(from: schedule.batches.count), "")
     }
 
-    func testUnknownASCIICapabilityDefaultsToAllowStreaming() {
-        XCTAssertTrue(StreamingCursorPolicy.inputSourceAllowsStreaming(asciiCapable: nil))
+    func testUnknownASCIICapabilityDefaultsToPaste() {
+        XCTAssertFalse(StreamingCursorPolicy.inputSourceAllowsStreaming(asciiCapable: nil))
         XCTAssertTrue(StreamingCursorPolicy.inputSourceAllowsStreaming(asciiCapable: true))
         XCTAssertFalse(StreamingCursorPolicy.inputSourceAllowsStreaming(asciiCapable: false))
     }

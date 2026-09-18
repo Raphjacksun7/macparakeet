@@ -169,9 +169,10 @@ private final class HeadInsertStreamingCursorInterruptToken: StreamingCursorInte
             onInterrupt()
             // Swallow the in-flight session event and re-inject a copy at HID so
             // remainder Unicode posts land before the user's key/click.
-            if let copy = event.copy() {
-                copy.post(tap: .cghidEventTap)
+            guard let copy = event.copy() else {
+                return Unmanaged.passUnretained(event)
             }
+            copy.post(tap: .cghidEventTap)
             return nil
         }
         return Unmanaged.passUnretained(event)
