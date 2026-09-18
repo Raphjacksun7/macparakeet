@@ -223,6 +223,12 @@ final class DictationFlowCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.permissionService.requestMicrophonePermissionCallCount, 1)
         startCaptureCalled = await harness.audio.startCaptureCalled
         XCTAssertTrue(startCaptureCalled)
+
+        harness.coordinator.stopDictation()
+        let leftRecording = await waitUntil {
+            !self.isFlowRecording(harness.coordinator.flowStateForTesting)
+        }
+        XCTAssertTrue(leftRecording, "The second hold must leave recording before the test exits")
     }
 
     func testHoldToTalkDeniedMicrophoneDoesNotStartCapture() async throws {
