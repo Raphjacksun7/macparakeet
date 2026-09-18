@@ -554,19 +554,24 @@ final class DictationFlowCoordinator {
                 do {
                     try await self.entitlementsService.assertCanTranscribe(now: Date())
                     guard !Task.isCancelled else { return }
-                    let microphoneReady = await self.ensureMicrophonePermissionForStart()
+                    let microphonePermission = await self.ensureMicrophonePermissionForStart()
                     guard !Task.isCancelled else { return }
-                    if microphoneReady {
+                    switch microphonePermission {
+                    case .alreadyGranted:
+                        self.sendEvent(.entitlementsGranted(generation: gen))
+                    case .grantedAfterPrompt:
                         if case .checkingEntitlements(mode: .holdToTalk) = self.stateMachine.state {
                             // The TCC sheet interrupts the hold. Starting capture
                             // here orphans a hold-to-talk session if the key-up
                             // was delivered to the sheet. Keep the grant; the
-                            // next hold starts immediately.
+                            // next hold starts immediately. An already-granted
+                            // mic never shows that sheet, so that path must
+                            // continue into this same press.
                             self.sendEvent(.stopRequested)
                             return
                         }
                         self.sendEvent(.entitlementsGranted(generation: gen))
-                    } else {
+                    case .denied:
                         self.sendEvent(
                             .startFailed(
                                 generation: gen,
@@ -1103,14 +1108,24 @@ final class DictationFlowCoordinator {
         }
     }
 
+    private enum MicrophoneStartPermission {
+        case alreadyGranted
+        case grantedAfterPrompt
+        case denied
+    }
+
     /// Ask for the microphone before capture starts so a skipped onboarding
     /// grant can continue into the same dictation press. Meetings already do
     /// this in their permission gate; dictation previously failed first, then
     /// prompted, then required a second press.
-    private func ensureMicrophonePermissionForStart() async -> Bool {
+    ///
+    /// Distinguish an already-granted mic from a grant after the system sheet.
+    /// Hold-to-talk can only wait for the next hold when that sheet actually
+    /// appeared; an already-granted mic must continue into this same press.
+    private func ensureMicrophonePermissionForStart() async -> MicrophoneStartPermission {
         switch await permissionService.checkMicrophonePermission() {
         case .granted:
-            return true
+            return .alreadyGranted
         case .notDetermined:
             Telemetry.send(.permissionPrompted(permission: .microphone))
             let granted = await permissionService.requestMicrophonePermission()
@@ -1119,9 +1134,9 @@ final class DictationFlowCoordinator {
                     ? .permissionGranted(permission: .microphone)
                     : .permissionDenied(permission: .microphone)
             )
-            return granted
+            return granted ? .grantedAfterPrompt : .denied
         case .denied:
-            return false
+            return .denied
         }
     }
 
