@@ -167,6 +167,12 @@ private final class HeadInsertStreamingCursorInterruptToken: StreamingCursorInte
         lock.unlock()
         if first {
             onInterrupt()
+            // Swallow the in-flight session event and re-inject a copy at HID so
+            // remainder Unicode posts land before the user's key/click.
+            if let copy = event.copy() {
+                copy.post(tap: .cghidEventTap)
+            }
+            return nil
         }
         return Unmanaged.passUnretained(event)
     }
@@ -203,10 +209,8 @@ public final class StreamingCursorInserter: StreamingCursorInserting, @unchecked
             remaining: schedule.batches.map(\.text)
         )
 
-        let token = interrupts.start {
-            playback.interruptAndDrain()
-        }
-        defer { token.invalidate() }
+        let token = startInterruptTap(playback: playback)
+        defer { invalidateInterruptTap(token) }
 
         do {
             for batch in schedule.batches {
@@ -239,6 +243,27 @@ public final class StreamingCursorInserter: StreamingCursorInserting, @unchecked
         if playback.committedCount > 0, !schedule.isInstant, !playback.isInterrupted {
             try? await clock.sleep(for: StreamingCursorPolicy.settleDuration)
         }
+    }
+
+    private func startInterruptTap(playback: StreamingCursorPlayback) -> any StreamingCursorInterruptToken {
+        let start = { [interrupts] in
+            interrupts.start {
+                playback.interruptAndDrain()
+            }
+        }
+        if Thread.isMainThread {
+            return start()
+        }
+        return DispatchQueue.main.sync(execute: start)
+    }
+
+    private func invalidateInterruptTap(_ token: any StreamingCursorInterruptToken) {
+        let invalidate = { token.invalidate() }
+        if Thread.isMainThread {
+            invalidate()
+            return
+        }
+        DispatchQueue.main.sync(execute: invalidate)
     }
 }
 

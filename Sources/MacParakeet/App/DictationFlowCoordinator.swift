@@ -685,10 +685,11 @@ final class DictationFlowCoordinator {
                         // Pure action-only dictation (e.g., "press return") — nothing to paste
                         self.sendEvent(.pasteFailed(generation: gen, message: "Keystroke failed. Check Accessibility permissions."))
                     } else if error as? StreamingCursorError == .partialInsert {
+                        _ = await self.clipboardService.copyToClipboard(insertText)
                         self.sendEvent(
                             .pasteFailed(
                                 generation: gen,
-                                message: "Some text was inserted. Check the focused app."
+                                message: "Some text was inserted. The full transcript is on the clipboard."
                             )
                         )
                     } else {
@@ -1208,10 +1209,13 @@ final class DictationFlowCoordinator {
         if shouldStream {
             do {
                 try await streamingInserter.insert(insertText)
+                if Task.isCancelled { return }
                 if keepDictationOnClipboard {
                     _ = await clipboardService.copyToClipboard(insertText)
                 }
                 if let action {
+                    try? await Task.sleep(for: StreamingCursorPolicy.settleDuration)
+                    if Task.isCancelled { return }
                     let keystrokeFired = try await clipboardService.pasteTextWithAction(
                         "",
                         postPasteAction: action,
