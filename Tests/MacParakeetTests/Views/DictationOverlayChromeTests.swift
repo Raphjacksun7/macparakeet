@@ -45,6 +45,20 @@ final class DictationOverlayChromeTests: XCTestCase {
         )
     }
 
+    func testCancelledUndoUsesCompactSideInsetForHoldToTalkMode() {
+        XCTAssertEqual(
+            DictationOverlayChrome.horizontalPadding(
+                state: .cancelled(timeRemaining: 3),
+                sessionKind: .dictation,
+                recordingMode: .holdToTalk,
+                isReady: false,
+                isIconOnly: false,
+                isNoSpeechExpanded: false
+            ),
+            7
+        )
+    }
+
     func testCommandRecordingKeepsWideSideInset() {
         XCTAssertEqual(
             DictationOverlayChrome.horizontalPadding(
