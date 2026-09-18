@@ -72,15 +72,29 @@ final class DictationFlowCoordinatorLoadCaptionTests: XCTestCase {
     }
 
     func testFirstInstallShowsPreparingThenClearsOnSuccess() async throws {
-        let harness = try makeHarness(isReady: false, transcribeDelayMs: 90, hasCompletedFirstDictation: false)
+        // Hold transcription open until the preparing caption is observed so a
+        // congested CI main queue cannot complete first-dictation before
+        // fireCaption reads hasCompletedFirstDictation.
+        let transcribeGate = AsyncGate()
+        let harness = try makeHarness(
+            isReady: false,
+            transcribeDelayMs: 0,
+            hasCompletedFirstDictation: false,
+            transcribeGate: transcribeGate
+        )
 
         try await harness.startAndStop()
-        let shown = await harness.captionSignal.wait(for: .preparing)
+        let shown = await harness.captionSignal.wait(for: .preparing, timeout: .seconds(3))
         XCTAssertTrue(shown)
-        let cleared = await waitUntil { harness.coordinator.processingLoadCaptionForTesting == nil }
+        XCTAssertTrue(harness.telemetry.snapshot().containsCaptionShown(firstInstall: true))
+
+        await transcribeGate.release()
+        let cleared = await waitUntil(timeoutMs: 3_000) {
+            harness.coordinator.processingLoadCaptionForTesting == nil
+        }
         XCTAssertTrue(cleared)
 
-        let recordedSuccess = await waitUntil {
+        let recordedSuccess = await waitUntil(timeoutMs: 3_000) {
             harness.telemetry.snapshot().containsCaptionDuration(outcome: "success")
         }
         XCTAssertTrue(recordedSuccess)

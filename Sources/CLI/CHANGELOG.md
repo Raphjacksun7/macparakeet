@@ -89,6 +89,8 @@ by checking exit code first: `2` = misuse, `1` = runtime, `0` = success.
 
 ## [Unreleased]
 
+## [4.4.0] — 2026-09-18
+
 ### Added
 
 - Inline `--provider` accepts `moonshot` (aliases `kimi`, `moonshotai`),
