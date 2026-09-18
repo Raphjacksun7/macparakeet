@@ -308,7 +308,7 @@ Space is always reserved for the tooltip (opacity toggle, not conditional render
    - Recording timer displayed (e.g., "0:03") -- hover tooltips provide additional guidance
    - **Live transcript preview (opt-in, `AppFeatures.liveDictationStreamingEnabled`, #517):** when enabled, a display-only stable rolling readout of in-progress text renders in a sibling panel *above* the pill (pill geometry unchanged): newest line pinned to the bottom, older lines rising and fading out at the top edge, with no mid-word truncation. The raw preview stream is stabilized into a monotonic append-only readout so shown words don't jump or disappear. It is decoupled from the paste — the final inserted text always comes from the stop-time transcription path. Per engine: Parakeet single-flight tail-window batch preview, both Nemotron builds native live partials, Whisper default-off, Cohere off because it is batch-only. Toggle and preview text size live in Settings → Capture → Dictation (`showLiveDictationPreview`, default on). See `spec/05-audio-pipeline.md` → "Dictation Live Preview".
 
-2. **Cancelled** -- `[countdown ring] [Undo button]` (~140px)
+2. **Cancelled** -- `[countdown ring] [Undo button]` (~122px; 7pt side inset)
    - Countdown ring: circular progress indicator (accent color, depletes over 5 seconds) with remaining seconds number in center
    - Tap ring to dismiss immediately (confirms discard)
    - Undo button: "Undo" text on subtle white background (0.15 opacity), rounded rect
