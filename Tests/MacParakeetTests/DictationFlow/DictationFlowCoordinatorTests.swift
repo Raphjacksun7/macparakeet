@@ -8,6 +8,11 @@ final class DictationFlowCoordinatorTests: XCTestCase {
     func testPillStartedPersistentRecordingSyncsFnHotkeyToStop() async throws {
         let harness = try await makeRecordingHarness()
         let fnManager = HotkeyManager(trigger: .fn)
+        // Isolate from the host keyboard and prove a Caps Lock latch (key 57)
+        // does not contaminate Fn-stop after a pill-started recording. Fn press
+        // reconciles CGEventSource keyState; an unstubbed leftover ordinary
+        // key would treat the stop gesture as contaminated and return [].
+        fnManager.setPhysicalKeyStateProviderForTesting { $0 == 57 }
         harness.coordinator.hotkeyManagers = [fnManager]
 
         harness.coordinator.startDictation(mode: .persistent, trigger: .pillClick)
@@ -173,9 +178,104 @@ final class DictationFlowCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.permissionService.requestMicrophonePermissionCallCount, 0)
         let startCaptureCalled = await harness.audio.startCaptureCalled
         XCTAssertTrue(startCaptureCalled)
+        guard case .recording(mode: .holdToTalk) = harness.coordinator.flowStateForTesting else {
+            return XCTFail("Expected hold-to-talk recording, got \(harness.coordinator.flowStateForTesting)")
+        }
         if case .error = harness.coordinator.overlayStateForTesting {
             XCTFail("An already-granted hold-to-talk start should not show a start-failure overlay")
         }
+
+        harness.coordinator.stopDictation()
+        let leftRecording = await waitUntil {
+            !self.isFlowRecording(harness.coordinator.flowStateForTesting)
+        }
+        XCTAssertTrue(leftRecording, "Releasing hold-to-talk must leave the recording state")
+    }
+
+    func testHoldToTalkSecondHoldStartsCaptureAfterMicSheetGrant() async throws {
+        let harness = try await makeMicPermissionHarness(
+            microphonePermission: .notDetermined,
+            requestMicResult: true
+        )
+
+        harness.coordinator.startDictation(mode: .holdToTalk, trigger: .hotkey)
+
+        let returnedToIdle = await waitUntil {
+            harness.coordinator.flowStateForTesting == .idle
+                && harness.permissionService.requestMicrophonePermissionCallCount == 1
+        }
+        XCTAssertTrue(returnedToIdle)
+        var startCaptureCalled = await harness.audio.startCaptureCalled
+        XCTAssertFalse(startCaptureCalled)
+
+        harness.coordinator.startDictation(mode: .holdToTalk, trigger: .hotkey)
+
+        let started = await waitUntil {
+            if case .recording(mode: .holdToTalk) = harness.coordinator.flowStateForTesting {
+                return true
+            }
+            return false
+        }
+        XCTAssertTrue(
+            started,
+            "The hold after the system mic sheet must start hold-to-talk capture"
+        )
+        XCTAssertEqual(harness.permissionService.requestMicrophonePermissionCallCount, 1)
+        startCaptureCalled = await harness.audio.startCaptureCalled
+        XCTAssertTrue(startCaptureCalled)
+
+        harness.coordinator.stopDictation()
+        let leftRecording = await waitUntil {
+            !self.isFlowRecording(harness.coordinator.flowStateForTesting)
+        }
+        XCTAssertTrue(leftRecording, "The second hold must leave recording before the test exits")
+    }
+
+    func testHoldToTalkDeniedMicrophoneDoesNotStartCapture() async throws {
+        let harness = try await makeMicPermissionHarness(
+            microphonePermission: .denied,
+            requestMicResult: false
+        )
+        harness.coordinator.testHook_skipMicPermissionAlert = true
+
+        harness.coordinator.startDictation(mode: .holdToTalk, trigger: .hotkey)
+
+        let failed = await waitUntil {
+            harness.coordinator.flowStateForTesting
+                == .finishing(outcome: .error("Microphone access required"))
+        }
+        XCTAssertTrue(failed)
+        XCTAssertEqual(harness.permissionService.requestMicrophonePermissionCallCount, 0)
+        let startCaptureCalled = await harness.audio.startCaptureCalled
+        XCTAssertFalse(startCaptureCalled)
+        guard case .error(let message) = harness.coordinator.overlayStateForTesting else {
+            return XCTFail("Denied mic should show the start-failure overlay")
+        }
+        XCTAssertEqual(message, "Microphone access required")
+    }
+
+    func testHoldToTalkSheetDenialDoesNotStartCapture() async throws {
+        let harness = try await makeMicPermissionHarness(
+            microphonePermission: .notDetermined,
+            requestMicResult: false
+        )
+        harness.coordinator.testHook_skipMicPermissionAlert = true
+
+        harness.coordinator.startDictation(mode: .holdToTalk, trigger: .hotkey)
+
+        let failed = await waitUntil {
+            harness.coordinator.flowStateForTesting
+                == .finishing(outcome: .error("Microphone access required"))
+        }
+        XCTAssertTrue(failed)
+        XCTAssertEqual(harness.permissionService.requestMicrophonePermissionCallCount, 1)
+        XCTAssertEqual(harness.permissionService.microphonePermission, .denied)
+        let startCaptureCalled = await harness.audio.startCaptureCalled
+        XCTAssertFalse(startCaptureCalled)
+        guard case .error(let message) = harness.coordinator.overlayStateForTesting else {
+            return XCTFail("A denied mic sheet should show the start-failure overlay")
+        }
+        XCTAssertEqual(message, "Microphone access required")
     }
 
     func testMenuBarPreferenceMatchesStateMachineIntent() {

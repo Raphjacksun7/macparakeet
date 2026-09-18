@@ -193,6 +193,9 @@ final class DictationFlowCoordinator {
     private var captionShownAt: Date?
     private var captionGeneration = 0
     var testHook_onProcessingLoadCaptionChange: ((DictationOverlayViewModel.ProcessingLoadCaption?) -> Void)?
+    /// Skip the recovery NSAlert so denied-mic starts can be asserted in XCTest
+    /// without `runModal` in a headless process.
+    var testHook_skipMicPermissionAlert = false
 
     // MARK: - Flow Context (not state machine concerns)
 
@@ -1154,6 +1157,7 @@ final class DictationFlowCoordinator {
     private func maybePresentMicPermissionAlert() {
         guard !micPermissionAlertShown else { return }
         micPermissionAlertShown = true
+        if testHook_skipMicPermissionAlert { return }
         Task { @MainActor in
             await self.presentMicPermissionAlert()
         }
