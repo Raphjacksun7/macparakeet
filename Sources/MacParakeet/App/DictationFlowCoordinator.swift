@@ -132,6 +132,13 @@ final class DictationFlowCoordinator {
         return "Paste failed and the clipboard could not be updated."
     }
 
+    static func streamingPartialInsertMessage(copiedToClipboard copied: Bool) -> String {
+        if copied {
+            return "Some text was inserted. The full transcript is on the clipboard."
+        }
+        return "Some text was inserted, but the clipboard could not be updated."
+    }
+
     /// Set after init; updated when dictation hotkey managers are recreated.
     var hotkeyManagers: [HotkeyManager] = []
 
@@ -688,11 +695,11 @@ final class DictationFlowCoordinator {
                         // Pure action-only dictation (e.g., "press return") — nothing to paste
                         self.sendEvent(.pasteFailed(generation: gen, message: "Keystroke failed. Check Accessibility permissions."))
                     } else if error as? StreamingCursorError == .partialInsert {
-                        _ = await self.clipboardService.copyToClipboard(insertText)
+                        let copied = await self.clipboardService.copyToClipboard(insertText)
                         self.sendEvent(
                             .pasteFailed(
                                 generation: gen,
-                                message: "Some text was inserted. The full transcript is on the clipboard."
+                                message: Self.streamingPartialInsertMessage(copiedToClipboard: copied)
                             )
                         )
                     } else {
@@ -1219,13 +1226,19 @@ final class DictationFlowCoordinator {
                 if let action {
                     try? await Task.sleep(for: .milliseconds(200))
                     if Task.isCancelled { return }
-                    let keystrokeFired = try await clipboardService.pasteTextWithAction(
-                        "",
-                        postPasteAction: action,
-                        restoresClipboard: true
-                    )
-                    if keystrokeFired {
-                        Telemetry.send(.keystrokeSnippetFired(action: action.rawValue))
+                    do {
+                        let keystrokeFired = try await clipboardService.pasteTextWithAction(
+                            "",
+                            postPasteAction: action,
+                            restoresClipboard: true
+                        )
+                        if keystrokeFired {
+                            Telemetry.send(.keystrokeSnippetFired(action: action.rawValue))
+                        }
+                    } catch {
+                        // Text already landed via Unicode events. Do not fall through
+                        // to Cmd+V of the full transcript.
+                        throw StreamingCursorError.partialInsert
                     }
                 }
                 return

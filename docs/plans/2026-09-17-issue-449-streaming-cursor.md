@@ -49,7 +49,7 @@ Implementation plan for [issue #449](https://github.com/moona3k/macparakeet/issu
 | Toggle off (default) | Today’s paste. No extra delay. |
 | Toggle on, Reduce Motion off | After transcription, text appears at the system caret in short batches over **180–420ms**, ease-out, ≤80ms caret settle. Then success dwell as today. |
 | Toggle on, Reduce Motion on | Instant paste. |
-| User key / click / scroll / new dictation / dismiss during stream | Remaining text inserts in **one** Unicode event (flush), then the user event proceeds. Never drop remainder. |
+| User key / click / new dictation / dismiss during stream | Remaining text inserts as **back-to-back capped Unicode events** (flush), then the user event proceeds. Never drop remainder. Scroll does **not** interrupt (trackpad inertia). |
 | Keep on clipboard | After successful insert (stream or paste), same retain/restore rules as today. Stream itself does not Cmd+V. |
 | Voice Return snippet | Stream (or paste) the transcript, then the existing post-insert keystroke. |
 | Failure to create event source | Paste fallback; user still gets text. |
@@ -95,8 +95,8 @@ sequenceDiagram
     C->>S: schedule(text)
     C->>I: play(schedule) as actionTask
     I-->>I: tag+post Unicode batches
-    alt user HID or Task cancel
-      I-->>I: flush remainder as one event
+    alt user key/click or Task cancel
+      I-->>I: flush remainder as capped HID events
     end
     opt keepOnClipboard
       C->>P: copyToClipboard

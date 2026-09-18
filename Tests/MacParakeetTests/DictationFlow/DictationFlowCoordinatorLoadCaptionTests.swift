@@ -494,6 +494,31 @@ final class DictationFlowCoordinatorLoadCaptionTests: XCTestCase {
         XCTAssertEqual(clipboard.pasteCallCount, 0)
     }
 
+    func testStreamingCursorPartialInsertReportsClipboardFailureWithoutPasting() async throws {
+        let inserter = RecordingStreamingInserter()
+        inserter.error = StreamingCursorError.partialInsert
+        let harness = try makeHarness(
+            isReady: true,
+            transcribeDelayMs: 5,
+            streamingCursorEnabled: true,
+            streamingInserter: inserter
+        )
+        await harness.clipboard.setCopySucceeds(false)
+
+        try await harness.startAndStop()
+        let failed = await waitUntil {
+            if case .finishing(outcome: .pasteFailedCopied(let message)) = harness.coordinator.flowStateForTesting {
+                return message == "Some text was inserted, but the clipboard could not be updated."
+            }
+            return false
+        }
+        let clipboard = await harness.clipboard.snapshot()
+
+        XCTAssertTrue(failed)
+        XCTAssertNil(clipboard.lastCopiedText)
+        XCTAssertEqual(clipboard.pasteCallCount, 0)
+    }
+
     func testStreamingCursorKeepOnClipboardCopiesAfterInsert() async throws {
         let harness = try makeHarness(
             isReady: true,

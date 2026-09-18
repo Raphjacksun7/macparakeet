@@ -35,6 +35,26 @@ private final class ImmediateStreamingClock: StreamingCursorClock, @unchecked Se
     }
 }
 
+private actor HoldUntilCancelledClock: StreamingCursorClock {
+    private var sleepStarted = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitUntilSleepStarted() async {
+        if sleepStarted { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            waiters.append(cont)
+        }
+    }
+
+    func sleep(for duration: Duration) async throws {
+        sleepStarted = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+        try await Task.sleep(for: .seconds(60))
+    }
+}
+
 private final class InterruptOnSleepClock: StreamingCursorClock, @unchecked Sendable {
     private let interrupt: ManualInterrupt
     private var fired = false
@@ -163,13 +183,14 @@ final class StreamingCursorInserterTests: XCTestCase {
 
     func testCancellationFlushesRemainderWithoutThrowing() async throws {
         let poster = FakeStreamingPoster()
-        let clock = ImmediateStreamingClock()
+        let clock = HoldUntilCancelledClock()
         let interrupts = ManualInterrupt()
         let inserter = StreamingCursorInserter(posting: poster, clock: clock, interrupts: interrupts)
 
         let task = Task {
             try await inserter.insert("Hello world!")
         }
+        await clock.waitUntilSleepStarted()
         task.cancel()
         try await task.value
         XCTAssertEqual(poster.snapshot().joined(), "Hello world!")

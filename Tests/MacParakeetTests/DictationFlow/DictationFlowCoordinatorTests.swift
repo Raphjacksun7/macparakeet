@@ -231,6 +231,20 @@ final class DictationFlowCoordinatorTests: XCTestCase {
         XCTAssertEqual(message, "Paste failed and the clipboard could not be updated.")
     }
 
+    func testStreamingPartialInsertMessageReportsClipboardWhenCopied() {
+        XCTAssertEqual(
+            DictationFlowCoordinator.streamingPartialInsertMessage(copiedToClipboard: true),
+            "Some text was inserted. The full transcript is on the clipboard."
+        )
+    }
+
+    func testStreamingPartialInsertMessageReportsClipboardFailureWhenNotCopied() {
+        XCTAssertEqual(
+            DictationFlowCoordinator.streamingPartialInsertMessage(copiedToClipboard: false),
+            "Some text was inserted, but the clipboard could not be updated."
+        )
+    }
+
     func testPasteFailureMessageStaysGenericWhenCopiedWithoutAccessibilityCause() {
         // A non-permission paste failure (e.g. CGEvent infrastructure) that still
         // landed on the clipboard must keep the generic copy - it must NOT claim
