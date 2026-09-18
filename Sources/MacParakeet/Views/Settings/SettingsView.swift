@@ -1218,6 +1218,14 @@ struct SettingsView: View {
                     detail: "Leaves the same text MacParakeet pastes on the clipboard, useful when remote desktops need a manual ⌘V.",
                     isOn: $viewModel.keepDictationOnClipboard
                 )
+
+                Divider()
+
+                settingsToggleRow(
+                    title: "Streaming cursor",
+                    detail: "Types the finished transcript into the app with a fast caret. Off keeps instant paste. Reduce Motion always pastes. ⌘Z may undo in pieces. Multi-line results still paste.",
+                    isOn: $viewModel.dictationStreamingCursorEnabled
+                )
             }
         }
     }

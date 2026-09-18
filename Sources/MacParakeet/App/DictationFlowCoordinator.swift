@@ -139,6 +139,9 @@ final class DictationFlowCoordinator {
 
     private let serviceSession: DictationServiceSession
     private let clipboardService: ClipboardServiceProtocol
+    private let streamingInserter: any StreamingCursorInserting
+    private let shouldReduceMotion: () -> Bool
+    private let inputSourceAllowsStreaming: () -> Bool
     private let entitlementsService: EntitlementsService
     private let dictationRepo: DictationRepository
     private let settingsViewModel: SettingsViewModel
@@ -208,6 +211,13 @@ final class DictationFlowCoordinator {
     init(
         dictationService: DictationService,
         clipboardService: ClipboardServiceProtocol,
+        streamingInserter: any StreamingCursorInserting = StreamingCursorInserter(),
+        shouldReduceMotion: @escaping () -> Bool = {
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        },
+        inputSourceAllowsStreaming: @escaping () -> Bool = {
+            StreamingCursorInputSource.allowsStreaming()
+        },
         entitlementsService: EntitlementsService,
         dictationRepo: DictationRepository,
         settingsViewModel: SettingsViewModel,
@@ -229,6 +239,9 @@ final class DictationFlowCoordinator {
     ) {
         self.serviceSession = DictationServiceSession(service: dictationService)
         self.clipboardService = clipboardService
+        self.streamingInserter = streamingInserter
+        self.shouldReduceMotion = shouldReduceMotion
+        self.inputSourceAllowsStreaming = inputSourceAllowsStreaming
         self.entitlementsService = entitlementsService
         self.dictationRepo = dictationRepo
         self.settingsViewModel = settingsViewModel
@@ -594,18 +607,25 @@ final class DictationFlowCoordinator {
             }
             let transcript = dictation.cleanTranscript ?? dictation.rawTranscript
             let insertionStyle = currentDictationInsertionStyle
-            Task { @MainActor in
+            let action = pendingPostPasteAction
+            pendingPostPasteAction = nil
+            let transcriptHasText = !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let appendsTrailingSpace = !(
+                dictation.processingMode.usesDeterministicPipeline
+                && insertionStyle == .inline
+            )
+            let normalPasteText = appendsTrailingSpace ? transcript + " " : transcript
+            let insertText = action == nil ? normalPasteText : transcript
+            let shouldStream = self.runtimePreferences.dictationStreamingCursorEnabled
+                && !self.shouldReduceMotion()
+                && self.inputSourceAllowsStreaming()
+                && transcriptHasText
+                && StreamingCursorPolicy.isStreamable(insertText)
+
+            let work = { @MainActor in
                 var completedDictation = dictation
-                let action = self.pendingPostPasteAction
-                self.pendingPostPasteAction = nil
                 let pastedToAppAtDispatch = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 let keepDictationOnClipboard = self.runtimePreferences.shouldKeepDictationOnClipboard
-                let transcriptHasText = !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let appendsTrailingSpace = !(
-                    dictation.processingMode.usesDeterministicPipeline
-                    && insertionStyle == .inline
-                )
-                let normalPasteText = appendsTrailingSpace ? transcript + " " : transcript
 
                 do {
                     if action == nil && !transcriptHasText {
@@ -618,23 +638,13 @@ final class DictationFlowCoordinator {
                     }
 
                     let pasteStartedAt = Date()
-                    if let action {
-                        // Action mode: no trailing space, action replaces the role of the space
-                        let keystrokeFired = try await self.clipboardService.pasteTextWithAction(
-                            transcript,
-                            postPasteAction: action,
-                            restoresClipboard: !keepDictationOnClipboard
-                        )
-                        if keystrokeFired {
-                            Telemetry.send(.keystrokeSnippetFired(action: action.rawValue))
-                        }
-                    } else {
-                        // Normal paste path: spacing follows the style used to shape this dictation.
-                        try await self.clipboardService.pasteText(
-                            normalPasteText,
-                            restoresClipboard: !keepDictationOnClipboard
-                        )
-                    }
+                    try await self.performDictationInsert(
+                        insertText: insertText,
+                        transcript: transcript,
+                        action: action,
+                        keepDictationOnClipboard: keepDictationOnClipboard,
+                        shouldStream: shouldStream
+                    )
 
                     // Cmd+V-posted breadcrumb. Action-only Voice Return (empty text +
                     // Return keystroke) is not a paste and must not enter e2e_ms.
@@ -674,6 +684,13 @@ final class DictationFlowCoordinator {
                     if !transcriptHasText {
                         // Pure action-only dictation (e.g., "press return") — nothing to paste
                         self.sendEvent(.pasteFailed(generation: gen, message: "Keystroke failed. Check Accessibility permissions."))
+                    } else if error as? StreamingCursorError == .partialInsert {
+                        self.sendEvent(
+                            .pasteFailed(
+                                generation: gen,
+                                message: "Some text was inserted. Check the focused app."
+                            )
+                        )
                     } else {
                         let fallbackText = keepDictationOnClipboard && action == nil ? normalPasteText : transcript
                         let copied = await self.clipboardService.copyToClipboard(fallbackText)
@@ -686,6 +703,16 @@ final class DictationFlowCoordinator {
                             )
                         )
                     }
+                }
+            }
+
+            if shouldStream {
+                actionTask = Task { @MainActor in
+                    await work()
+                }
+            } else {
+                Task { @MainActor in
+                    await work()
                 }
             }
 
@@ -1171,6 +1198,54 @@ final class DictationFlowCoordinator {
         )
     }
 
+    private func performDictationInsert(
+        insertText: String,
+        transcript: String,
+        action: KeyAction?,
+        keepDictationOnClipboard: Bool,
+        shouldStream: Bool
+    ) async throws {
+        if shouldStream {
+            do {
+                try await streamingInserter.insert(insertText)
+                if keepDictationOnClipboard {
+                    _ = await clipboardService.copyToClipboard(insertText)
+                }
+                if let action {
+                    let keystrokeFired = try await clipboardService.pasteTextWithAction(
+                        "",
+                        postPasteAction: action,
+                        restoresClipboard: true
+                    )
+                    if keystrokeFired {
+                        Telemetry.send(.keystrokeSnippetFired(action: action.rawValue))
+                    }
+                }
+                return
+            } catch let error as StreamingCursorError
+                where error == .eventSourceUnavailable || error == .eventCreationFailed
+            {
+                dictationLog.notice("streaming_cursor_fell_back_to_paste")
+            }
+        }
+
+        if let action {
+            let keystrokeFired = try await clipboardService.pasteTextWithAction(
+                transcript,
+                postPasteAction: action,
+                restoresClipboard: !keepDictationOnClipboard
+            )
+            if keystrokeFired {
+                Telemetry.send(.keystrokeSnippetFired(action: action.rawValue))
+            }
+        } else {
+            try await clipboardService.pasteText(
+                insertText,
+                restoresClipboard: !keepDictationOnClipboard
+            )
+        }
+    }
+
     private func emitDictationInsertIfPossible(pasteStartedAt: Date) {
         guard let timings = pendingInsertTimings,
             let captureMs = timings.captureMs,
@@ -1248,6 +1323,13 @@ final class DictationFlowCoordinator {
             case .eventSourceUnavailable: return "paste_event_source_unavailable"
             case .eventCreationFailed: return "paste_event_creation_failed"
             case .pasteboardWriteFailed: return "pasteboard_write_failed"
+            }
+        }
+        if let streamingError = error as? StreamingCursorError {
+            switch streamingError {
+            case .eventSourceUnavailable: return "streaming_event_source_unavailable"
+            case .eventCreationFailed: return "streaming_event_creation_failed"
+            case .partialInsert: return "streaming_partial_insert"
             }
         }
         return "unknown"

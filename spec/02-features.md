@@ -219,6 +219,9 @@ Legacy default installs using `Fn+Space` hands-free plus `Fn` push-to-talk migra
 ├─────────────────────────────────────────────────────────────────┤
 │ 6. Result                                                        │
 │    - Auto-paste into target app (NSPasteboard + simulated Cmd+V) │
+│    - Optional Streaming cursor (default off) types the finished  │
+│      transcript with a short Unicode caret race; Reduce Motion,  │
+│      IMEs, and newline/tab results still paste                   │
 │    - Previous clipboard restored by default; opt-in retain mode  │
 │      leaves the exact pasted text available for manual Cmd+V      │
 │    - Save to dictation history (database)                        │
@@ -228,6 +231,8 @@ Legacy default installs using `Fn+Space` hands-free plus `Fn` push-to-talk migra
 ```
 
 **Text insertion:**
+
+Default insertion is a single clipboard paste (one ⌘Z in most apps):
 
 ```swift
 // 1. Save current clipboard
@@ -248,6 +253,12 @@ if restoresClipboard {
     }
 }
 ```
+
+Optional **Streaming cursor** (Settings → Dictation, default off) types the finished
+transcript into the focused app with a duration-capped Unicode HID stream.
+Reduce Motion, non-ASCII-capable IMEs, and text containing newline/tab still
+paste. A user key or click flushes remainder before the user event is
+delivered. ⌘Z may undo in pieces. See issue #449.
 
 **Soft cancel (Esc):**
 - Pressing Escape during recording triggers soft cancel

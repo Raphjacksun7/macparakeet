@@ -277,6 +277,21 @@ final class DictationFlowCoordinatorTests: XCTestCase {
         )
     }
 
+    func testCommandFailureBucketSplitsStreamingCursorFailures() {
+        XCTAssertEqual(
+            DictationFlowCoordinator.commandFailureBucket(for: StreamingCursorError.eventSourceUnavailable),
+            "streaming_event_source_unavailable"
+        )
+        XCTAssertEqual(
+            DictationFlowCoordinator.commandFailureBucket(for: StreamingCursorError.eventCreationFailed),
+            "streaming_event_creation_failed"
+        )
+        XCTAssertEqual(
+            DictationFlowCoordinator.commandFailureBucket(for: StreamingCursorError.partialInsert),
+            "streaming_partial_insert"
+        )
+    }
+
     private func makeMicPermissionHarness(
         microphonePermission: PermissionStatus,
         requestMicResult: Bool

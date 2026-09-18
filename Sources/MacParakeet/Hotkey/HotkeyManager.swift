@@ -211,6 +211,10 @@ public final class HotkeyManager {
             return Unmanaged.passUnretained(event)
         }
 
+        if StreamingCursorEventMarker.isMarked(event) {
+            return Unmanaged.passUnretained(event)
+        }
+
         switch trigger.kind {
         case .disabled:
             return Unmanaged.passUnretained(event)

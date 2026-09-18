@@ -1071,6 +1071,23 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(settings, [.keepDictationOnClipboard])
     }
 
+    func testSettingStreamingCursorPersistsAndEmitsTelemetry() {
+        let telemetry = SettingsTelemetrySpy()
+        Telemetry.configure(telemetry)
+
+        XCTAssertFalse(viewModel.dictationStreamingCursorEnabled)
+        viewModel.dictationStreamingCursorEnabled = true
+
+        XCTAssertTrue(
+            testDefaults.bool(forKey: UserDefaultsAppRuntimePreferences.dictationStreamingCursorEnabledKey)
+        )
+        let settings = telemetry.snapshot().compactMap { event -> TelemetrySettingName? in
+            guard case .settingChanged(let setting, _) = event else { return nil }
+            return setting
+        }
+        XCTAssertEqual(settings, [.streamingCursor])
+    }
+
     func testSettingDictationInsertionStylePersistsAndEmitsTelemetry() {
         let telemetry = SettingsTelemetrySpy()
         Telemetry.configure(telemetry)

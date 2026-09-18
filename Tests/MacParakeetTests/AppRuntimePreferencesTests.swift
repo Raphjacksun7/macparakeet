@@ -43,6 +43,19 @@ final class AppRuntimePreferencesTests: XCTestCase {
         XCTAssertTrue(preferences.shouldKeepDictationOnClipboard)
     }
 
+    func testStreamingCursorDefaultsToFalse() {
+        let preferences = makePreferences()
+        XCTAssertFalse(preferences.dictationStreamingCursorEnabled)
+    }
+
+    func testStreamingCursorReadsStoredValue() {
+        let suite = "app-runtime-prefs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: UserDefaultsAppRuntimePreferences.dictationStreamingCursorEnabledKey)
+        XCTAssertTrue(UserDefaultsAppRuntimePreferences(defaults: defaults).dictationStreamingCursorEnabled)
+    }
+
     func testCustomVocabularyRecognitionBoostingDefaultsOffAndReadsStoredValue() {
         let suite = "app-runtime-prefs-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
