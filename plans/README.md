@@ -39,6 +39,7 @@ The independent audio-evidence contract and ADR-010 direction are documented; ap
 
 | Plan | Title | Status | Priority | What's left |
 |------|-------|--------|----------|-------------|
+| [2026-09-17-issue-449-streaming-cursor](../docs/plans/2026-09-17-issue-449-streaming-cursor.md) | Optional streaming cursor dictation insertion (#449) | **IMPLEMENTED ON FEATURE BRANCH** | P2 | Default-off Unicode caret stream; interrupt flush; paste fallback. Research in `docs/research/2026-09-17-issue-449-streaming-cursor.md`. |
 | [2026-09-17-issue-1079-wrapping-up](active/2026-09-17-issue-1079-wrapping-up.md) | Unstick Transcribe tile "Wrapping up…" (#1079) | **IMPLEMENTED** | P1 | Completing→transcribing no longer waits on a hidden pill collapse. Coordinator fallback + hidden-stop tests; audit in `docs/audits/2026-09-17-issue-1079-wrapping-up.md`. PR next. |
 | [2026-09-14-issue-609-calendar-event-skip](active/2026-09-14-issue-609-calendar-event-skip.md) | Per-event calendar skip (#609) | **IMPLEMENTED** | P2 | Built on `feat/issue-609-calendar-event-skip`: occurrence/event mute, Upcoming + toast, CLI annotations, owning-countdown re-eval. Independent review complete. |
 | [2026-09-13-timed-transcript-editing](active/2026-09-13-timed-transcript-editing.md) | Timed transcript text editing and line merge (#893) | **IMPLEMENTED ON FEATURE BRANCH** | P1 | App, core, consumers, contracts, CLI, focused suites, independent review, and the full test gate are complete. Merge review and hands-on testing with real saved transcripts remain. |
