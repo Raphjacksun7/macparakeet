@@ -880,6 +880,13 @@ whether a signal is real user impact, which release or code path is implicated,
 and whether the right follow-up is an issue, PR, dashboard taxonomy fix, or
 continued monitoring.
 
+The reviewer is the **health** plane (thresholds, crashes, watchlists). The
+proposed **product** plane — daily HTML briefing for reach, activation, mix,
+and “what changed,” with yesterday plus 7d/28d comparisons — is specified in
+[`docs/design/2026-09-18-daily-telemetry-observability.md`](design/2026-09-18-daily-telemetry-observability.md).
+It consumes this JSON; it does not recompute failure rates. It is not
+implemented yet.
+
 ---
 
 ## Capacity Planning
