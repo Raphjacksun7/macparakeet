@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-public enum NativeVoiceControlError: Error, LocalizedError, Sendable {
+public enum NativeVoiceControlError: Error, LocalizedError, Sendable, Equatable {
     case permission, noWindow, changed, unsupported, excluded, targetChanged, windowChanged, observationExpired
     public var errorDescription: String? {
         switch self {
@@ -39,6 +39,8 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
     private let maxNodes: Int
     private let includeMenus: Bool
     private let includeApplications: Bool
+    /// Chromium rebuilds its AX tree when these flags are first set. Ask once per process.
+    private var chromiumAccessibilityPIDs: Set<Int32> = []
 
     public init(
         excludedBundleIDs: Set<String> = [
@@ -53,38 +55,53 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
 
     public func observe() async throws -> VoiceControlSnapshot {
         guard AXIsProcessTrusted() else { throw NativeVoiceControlError.permission }
-        let context = await MainActor.run { () -> (Int32, String, String, [(Int32, String, String)])? in
-            guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
-            let running = NSWorkspace.shared.runningApplications.filter {
-                $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
-            }.compactMap { app -> (Int32, String, String)? in
-                guard let bundle = app.bundleIdentifier else { return nil }
-                return (app.processIdentifier, app.localizedName ?? bundle, bundle)
+        var last = NativeVoiceControlError.noWindow
+        var acquired: (Int32, String, String, [(Int32, String, String)], AXUIElement)?
+        for attempt in 0..<6 {
+            if attempt > 0 { try await Task.sleep(for: .milliseconds(180)) }
+            let context = await MainActor.run { () -> (Int32, String, String, [(Int32, String, String)])? in
+                guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+                let running = NSWorkspace.shared.runningApplications.filter {
+                    $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                }.compactMap { app -> (Int32, String, String)? in
+                    guard let bundle = app.bundleIdentifier else { return nil }
+                    return (app.processIdentifier, app.localizedName ?? bundle, bundle)
+                }
+                return (app.processIdentifier, app.localizedName ?? "App", app.bundleIdentifier ?? "", running)
             }
-            return (app.processIdentifier, app.localizedName ?? "App", app.bundleIdentifier ?? "", running)
+            guard let (pid, name, bundle, running) = context else { last = .noWindow; continue }
+            if excludedBundleIDs.contains(bundle) { throw NativeVoiceControlError.excluded }
+            if pid == ProcessInfo.processInfo.processIdentifier { last = .excluded; continue }
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 0.15)
+            guard let root = Self.focusedOrMainWindow(app) else { last = .noWindow; continue }
+            acquired = (pid, name, bundle, running, root)
+            break
         }
-        guard let (pid, name, bundle, running) = context else { throw NativeVoiceControlError.noWindow }
-        guard !excludedBundleIDs.contains(bundle), pid != ProcessInfo.processInfo.processIdentifier else {
-            throw NativeVoiceControlError.excluded
-        }
+        guard let (pid, name, bundle, running, initialRoot) = acquired else { throw last }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.15)
-        guard let root = Self.element(app, kAXFocusedWindowAttribute) else { throw NativeVoiceControlError.noWindow }
+        try await enableChromiumAccessibilityIfNeeded(app: app, pid: pid, bundle: bundle)
+        let root = Self.focusedOrMainWindow(app) ?? initialRoot
         let snapshotID = UUID()
         handles.removeAll(); applications.removeAll(); undoTargetID = nil
         window = Element(value: root); processID = pid; observedAt = .now
         var targets: [VoiceControlTarget] = []
         var text: [String] = []
-        var stack: [(AXUIElement, Int)] = []
-        if includeMenus, let menu = Self.element(app, kAXMenuBarAttribute) { stack.append((menu, 0)) }
-        stack.append((root, 0))
-        if let focused = Self.element(app, kAXFocusedUIElementAttribute) { stack.append((focused, 0)) }
+        var stack: [(AXUIElement, Int, Bool)] = []
+        if includeMenus, !Self.isBrowserBundle(bundle), let menu = Self.element(app, kAXMenuBarAttribute) {
+            stack.append((menu, 0, false))
+        }
+        stack.append((root, 0, false))
+        if let focused = Self.element(app, kAXFocusedUIElementAttribute) { stack.append((focused, 0, false)) }
         var visited: Set<CFHashCode> = []
         var count = 0
         var complete = true
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         let focused = Self.element(app, kAXFocusedUIElementAttribute)
-        while let (node, depth) = stack.popLast() {
+        let isBrowser = Self.isBrowserBundle(bundle)
+        var pending: [(target: VoiceControlTarget, bound: BoundTarget, inWeb: Bool)] = []
+        while let (node, depth, inWebArea) = stack.popLast() {
             try Task.checkCancellation()
             guard count < maxNodes, ContinuousClock.now < deadline else { complete = false; break }
             let hash = CFHash(node)
@@ -111,40 +128,69 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             }
             if visible, role == kAXScrollAreaRole { operations.insert(.scroll) }
             if visible, let focused, CFEqual(focused, node), enabled { operations.insert(.key) }
+            var inWeb = inWebArea || role == "AXWebArea"
+            if isBrowser, !inWeb, !operations.isEmpty { inWeb = Self.ancestorIsWebArea(node) }
             if !operations.isEmpty {
-                let id = "n:\(targets.count)"
                 let publicLabel = Self.contextLabel(label, role: role)
                 let target = VoiceControlTarget(
-                    id: id, label: String(publicLabel.prefix(240)), role: role,
+                    id: "pending", label: String(publicLabel.prefix(240)), role: role,
                     value: value.isEmpty || publicLabel != label ? nil : String(value.prefix(500)), operations: operations,
                     isNavigation: Self.isOrdinaryControl(role: role, pressable: operations.contains(.press)),
                     isFocused: focused.map { CFEqual($0, node) } ?? false,
                     selectedText: Self.completeSelection(node),
                     valueIsComplete: value.count <= 500)
-                handles[id] = BoundTarget(
-                    element: Element(value: node), target: target,
-                    fingerprint: Self.fingerprint(node))
-                targets.append(target)
+                pending.append(
+                    (
+                        target,
+                        BoundTarget(
+                            element: Element(value: node), target: target, fingerprint: Self.fingerprint(node)),
+                        inWeb
+                    ))
             } else if visible, role == kAXStaticTextRole, !label.isEmpty || !value.isEmpty, text.joined().count < 3000 {
                 text.append(String((label.isEmpty ? value : label).prefix(250)))
             }
-            // Closed menus can expose recent documents and account names through
-            // AX even though they are not visible. Never enumerate their children.
             let closedMenu = role == kAXMenuBarItemRole && (Self.attribute(node, kAXSelectedAttribute) as? Bool != true)
             if !closedMenu, let children = Self.attribute(node, kAXChildrenAttribute) as? [AXUIElement] {
                 if depth < 32 {
                     if children.count > 250 { complete = false }
-                    stack.append(contentsOf: children.prefix(250).reversed().map { ($0, depth + 1) })
+                    stack.append(contentsOf: children.prefix(250).reversed().map { ($0, depth + 1, inWeb) })
                 } else if !children.isEmpty { complete = false }
             }
         }
+        let hasWebContent = pending.contains { $0.inWeb }
+        for item in pending
+        where Self.keepOfferedControl(
+            isBrowser: isBrowser, inWebArea: item.inWeb, hasWebContent: hasWebContent, label: item.target.label,
+            role: item.target.role)
+        {
+            let id = "n:\(targets.count)"
+            let target = VoiceControlTarget(
+                id: id, label: item.target.label, role: item.target.role, value: item.target.value,
+                operations: item.target.operations, isNavigation: item.target.isNavigation,
+                isFocused: item.target.isFocused, selectedText: item.target.selectedText,
+                valueIsComplete: item.target.valueIsComplete, consequence: item.target.consequence)
+            handles[id] = BoundTarget(
+                element: item.bound.element, target: target, fingerprint: item.bound.fingerprint)
+            targets.append(target)
+        }
+        var seenApps = Set<String>()
         for (appPID, appName, appBundle) in running.prefix(includeApplications ? 15 : 0)
-        where !excludedBundleIDs.contains(appBundle) {
+        where !excludedBundleIDs.contains(appBundle) && appPID != pid {
+            let key = appName.lowercased()
+            guard seenApps.insert(key).inserted else { continue }
             let id = "app:\(appPID)"
             applications[id] = appPID
             targets.append(
                 VoiceControlTarget(
                     id: id, label: appName, role: "application", operations: [.activateApp], isNavigation: true))
+        }
+        if isBrowser {
+            for destination in VoiceControlWebDestination.all {
+                targets.append(
+                    VoiceControlTarget(
+                        id: destination.id, label: destination.label, role: "url",
+                        operations: [.press], isNavigation: true))
+            }
         }
         if let undo = undoEdit, undo.pid == pid, CFEqual(undo.window.value, root), Self.isVisible(undo.element.value),
             Date().timeIntervalSince(undo.time) < 30,
@@ -186,20 +232,30 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         if action.operation == .activateApp {
             guard let pid = applications[action.targetID] else { throw NativeVoiceControlError.changed }
             current = nil
-            let activated = try await MainActor.run {
+            try authority.check()
+            let activated = await VoiceControlAppActivation.bringForward(processID: pid)
+            try authority.check()
+            return VoiceControlReceipt(
+                status: activated ? .verified : .failed,
+                message: activated ? "Brought the requested app forward." : "Couldn’t activate that app.")
+        }
+        if let destination = VoiceControlWebDestination.named(action.targetID) {
+            guard action.operation == .press, snapshot.targets.contains(where: { $0.id == destination.id }) else {
+                throw NativeVoiceControlError.unsupported
+            }
+            current = nil
+            let opened = try await MainActor.run {
                 try authority.perform {
                     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == expectedPID else {
                         throw NativeVoiceControlError.windowChanged
                     }
-                    return NSRunningApplication(processIdentifier: pid)?.activate() ?? false
+                    return NSWorkspace.shared.open(destination.url)
                 }
             }
-            guard activated else { return VoiceControlReceipt(status: .failed, message: "Couldn’t activate that app.") }
-            try await Task.sleep(for: .milliseconds(100))
-            let frontmost = await MainActor.run { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+            guard opened else { return VoiceControlReceipt(status: .failed, message: "Couldn’t open that website.") }
+            try await Task.sleep(for: .milliseconds(1_800))
             return VoiceControlReceipt(
-                status: frontmost == pid ? .verified : .unknown,
-                message: "Requested app activation.")
+                status: .transitionObserved, message: "Opened the requested website.")
         }
         guard let bound = handles[action.targetID], bound.target.operations.contains(action.operation) else {
             throw NativeVoiceControlError.unsupported
@@ -272,6 +328,9 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             let verified = await verifyTextValue(node, expected: replacement, authority: authority)
             if plainField, verified {
                 undoEdit = (Element(value: node), expectedWindow, beforeValue, replacement, expectedPID, Date())
+                if bound.target.role == kAXComboBoxRole {
+                    try await Task.sleep(for: .milliseconds(450))
+                }
             }
             if !plainField { undoEdit = nil }
             return VoiceControlReceipt(
@@ -332,6 +391,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 CFEqual(currentFocus, node)
             else { throw NativeVoiceControlError.changed }
             try await validateForeground(expectedPID: expectedPID, expectedWindow: expectedWindow)
+            let beforeTransition = transitionEvidence()
             try authority.perform {
                 guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
                     let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)
@@ -341,6 +401,18 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 down.setIntegerValueField(.eventSourceUserData, value: StreamingCursorEventMarker.userData)
                 up.setIntegerValueField(.eventSourceUserData, value: StreamingCursorEventMarker.userData)
                 down.postToPid(expectedPID); up.postToPid(expectedPID)
+            }
+            if ["return", "enter", "tab", "escape"].contains(key.lowercased()) {
+                for _ in 0..<4 {
+                    try await Task.sleep(for: .milliseconds(120))
+                    try authority.check()
+                    let afterTransition = transitionEvidence()
+                    if afterTransition != beforeTransition, !afterTransition.isEmpty {
+                        return VoiceControlReceipt(
+                            status: .transitionObserved,
+                            message: "The interface changed after the key; checking the next step.")
+                    }
+                }
             }
             return VoiceControlReceipt(status: .unknown, message: "Key sent. Check the result before continuing.")
         case .scroll:
@@ -379,7 +451,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
     /// Bounded structural evidence, not a model's success assertion. Changes to
     /// editable values, menus, URLs or window identity permit fresh planning.
     private func transitionEvidence() -> Set<String> {
-        guard let root = Self.element(AXUIElementCreateApplication(processID), kAXFocusedWindowAttribute) else {
+        guard let root = Self.focusedOrMainWindow(AXUIElementCreateApplication(processID)) else {
             return []
         }
         var evidence: Set<String> = ["window:\(CFHash(root))"]
@@ -409,7 +481,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
 
     private func validateContext() throws {
         guard let window,
-            let focused = Self.element(AXUIElementCreateApplication(processID), kAXFocusedWindowAttribute),
+            let focused = Self.focusedOrMainWindow(AXUIElementCreateApplication(processID)),
             CFEqual(focused, window.value)
         else { throw NativeVoiceControlError.windowChanged }
     }
@@ -425,6 +497,11 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
     private static func element(_ node: AXUIElement, _ name: String) -> AXUIElement? {
         guard let value = attribute(node, name), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeDowncast(value as AnyObject, to: AXUIElement.self)
+    }
+    private static func focusedOrMainWindow(_ app: AXUIElement) -> AXUIElement? {
+        if let focused = element(app, kAXFocusedWindowAttribute) { return focused }
+        guard let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement] else { return nil }
+        return windows.first
     }
     private static func string(_ node: AXUIElement, _ name: String) -> String {
         if let value = attribute(node, name) as? String { return value }
@@ -480,6 +557,85 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             return true
         }
         return role == kAXStaticTextRole && pressable
+    }
+    static func isBrowserBundle(_ bundle: String) -> Bool {
+        [
+            "com.google.Chrome", "com.google.Chrome.canary", "com.apple.Safari", "org.mozilla.firefox",
+            "org.mozilla.firefoxdeveloperedition", "com.microsoft.edgemac", "com.brave.Browser",
+            "company.thebrowser.Browser",
+        ].contains(bundle)
+    }
+    static func isChromiumBundle(_ bundle: String) -> Bool {
+        [
+            "com.google.Chrome", "com.google.Chrome.canary", "com.microsoft.edgemac", "com.brave.Browser",
+            "company.thebrowser.Browser",
+        ].contains(bundle)
+    }
+    /// Electron honours AXManualAccessibility; Chromium honours AXEnhancedUserInterface.
+    /// Setting them rebuilds the tree, so this runs once per process and then waits for a page.
+    private func enableChromiumAccessibilityIfNeeded(app: AXUIElement, pid: Int32, bundle: String) async throws {
+        guard Self.isChromiumBundle(bundle) else { return }
+        let firstAsk = chromiumAccessibilityPIDs.insert(pid).inserted
+        if firstAsk {
+            AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+            for _ in 0..<8 {
+                if Self.hasPopulatedWebArea(app) { return }
+                try await Task.sleep(for: .milliseconds(150))
+            }
+            return
+        }
+        // Chromium can drop its tree after a navigation; ask once more, briefly.
+        guard !Self.hasPopulatedWebArea(app) else { return }
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        try await Task.sleep(for: .milliseconds(250))
+    }
+    static func hasPopulatedWebArea(_ app: AXUIElement) -> Bool {
+        guard let window = focusedOrMainWindow(app) else { return false }
+        var pending = [window]
+        var visited = 0
+        while let node = pending.popLast(), visited < 400 {
+            visited += 1
+            if string(node, kAXRoleAttribute) == "AXWebArea" {
+                let children = attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
+                if !children.isEmpty { return true }
+                continue
+            }
+            if let children = attribute(node, kAXChildrenAttribute) as? [AXUIElement] {
+                pending.append(contentsOf: children)
+            }
+        }
+        return false
+    }
+    static func isBrowserShellNoise(label: String, role: String) -> Bool {
+        let lower = label.lowercased()
+        if lower.contains("memory usage") || lower.contains("cpu usage") || lower.contains("gpu usage") {
+            return true
+        }
+        if lower.contains("address and search") || lower == "tab search" || lower.hasPrefix("tab search") {
+            return true
+        }
+        if role == kAXStaticTextRole, lower.contains("book your ticket"), lower.contains("google flights") {
+            return true
+        }
+        return false
+    }
+    static func keepOfferedControl(
+        isBrowser: Bool, inWebArea: Bool, hasWebContent: Bool, label: String, role: String
+    ) -> Bool {
+        if isBrowserShellNoise(label: label, role: role) { return false }
+        if isBrowser, hasWebContent, !inWebArea, role != "application", role != "undo" { return false }
+        return true
+    }
+    private static func ancestorIsWebArea(_ node: AXUIElement) -> Bool {
+        var current = node
+        for _ in 0..<24 {
+            guard let parent = element(current, kAXParentAttribute) else { return false }
+            if string(parent, kAXRoleAttribute) == "AXWebArea" { return true }
+            current = parent
+        }
+        return false
     }
     private static func isVisible(_ node: AXUIElement, within window: AXUIElement? = nil) -> Bool {
         guard attribute(node, "AXHidden") as? Bool != true,

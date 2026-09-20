@@ -108,9 +108,11 @@ final class VoiceControlRecoveryTests: XCTestCase {
         let json = String(decoding: try JSONEncoder().encode(records), as: UTF8.self)
         XCTAssertFalse(json.contains("PRIVATE_PAYLOAD"))
         XCTAssertFalse(json.contains("PRIVATE_COMMAND"))
-        XCTAssertFalse(json.contains("destination"))
+        XCTAssertTrue(records.contains { $0.targetID == "destination" && $0.actor == "local" })
         XCTAssertTrue(records.contains { $0.stage == "verification" && $0.outcome == "verified" })
         XCTAssertTrue(records.contains { $0.stage == "observation" && $0.candidateCount != nil })
+        let shareable = records.map { $0.shareable() }
+        XCTAssertTrue(shareable.contains { $0.targetID == "destination" && $0.targetLabel == nil })
     }
 
     func testConsequentialTransitionPausesAndCannotReplayAfterChangedState() async {
@@ -231,6 +233,7 @@ final class VoiceControlRecoveryTests: XCTestCase {
         XCTAssertEqual(policy("20 September"), .ordinary)
         XCTAssertEqual(policy("Remove filter"), .ordinary)
         XCTAssertEqual(policy("Submit search"), .ordinary)
+        XCTAssertEqual(policy("Globe", assessment: .unknown), .ordinary)
         XCTAssertEqual(policy("Pay now"), .payment)
         XCTAssertEqual(policy("Delete file"), .destructive)
         XCTAssertEqual(policy("Send message"), .externalCommitment)

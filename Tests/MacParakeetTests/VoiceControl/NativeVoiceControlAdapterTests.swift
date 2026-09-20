@@ -37,4 +37,26 @@ final class NativeVoiceControlAdapterTests: XCTestCase {
         XCTAssertTrue(NativeVoiceControlAdapter.isOrdinaryControl(role: kAXRadioButtonRole, pressable: true))
         XCTAssertFalse(NativeVoiceControlAdapter.isOrdinaryControl(role: kAXButtonRole, pressable: true))
     }
+    func testBrowserChromeNoiseIsDroppedWhenThePageHasControls() {
+        XCTAssertTrue(NativeVoiceControlAdapter.isBrowserBundle("com.google.Chrome"))
+        XCTAssertFalse(NativeVoiceControlAdapter.isBrowserBundle("com.apple.Notes"))
+        XCTAssertTrue(
+            NativeVoiceControlAdapter.isBrowserShellNoise(
+                label: "Find Cheap Flights Worldwide & Book Your Ticket - Google Flights - Memory usage - 305 MB",
+                role: kAXStaticTextRole))
+        XCTAssertTrue(
+            NativeVoiceControlAdapter.isBrowserShellNoise(label: "Address and search bar", role: kAXTextFieldRole))
+        XCTAssertTrue(NativeVoiceControlAdapter.isBrowserShellNoise(label: "Tab search", role: kAXPopUpButtonRole))
+        XCTAssertFalse(NativeVoiceControlAdapter.isBrowserShellNoise(label: "Where from?", role: kAXComboBoxRole))
+        XCTAssertTrue(
+            NativeVoiceControlAdapter.keepOfferedControl(
+                isBrowser: true, inWebArea: true, hasWebContent: true, label: "Where from?", role: kAXComboBoxRole))
+        XCTAssertFalse(
+            NativeVoiceControlAdapter.keepOfferedControl(
+                isBrowser: true, inWebArea: false, hasWebContent: true, label: "Address and search bar",
+                role: kAXTextFieldRole))
+        XCTAssertTrue(
+            NativeVoiceControlAdapter.keepOfferedControl(
+                isBrowser: false, inWebArea: false, hasWebContent: false, label: "New Note", role: kAXButtonRole))
+    }
 }

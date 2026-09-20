@@ -58,5 +58,23 @@ asks for genuinely missing intent, separately from consequence approval.
 Corrections amend the task without erasing actual effect receipts. Manual input
 pauses authority while preserving the goal; explicit continuation reobserves and
 respects manual edits. Useful live activity may contain task content; bounded
-operational traces are local and content-minimized, with no automatic upload or
+operational traces are local, with a content-minimized shareable copy and a
+separate on-disk session log for debugging. There is no automatic upload or
 raw audio/screenshot recording. See the linked direction documents in the plan.
+
+## Implementation amendment — 2026-09-20
+
+The DEBUG experiment now includes:
+
+- Native AX for apps and the user's existing browser; no extension or CDP.
+- Local routes for allowlisted sites, Google Flights form filling, ordinary
+  web search boxes, Gmail Compose, and app activation. Jev never receives
+  `role=url` destinations.
+- Joinable per-step traces plus one wide event per turn (`latest.md`). Local
+  logs may include the instruction and control labels; Copy diagnostics omits
+  them. Field values stay out.
+- Consequence policy that proceeds on ordinary search/navigation/form steps
+  and asks only for payment, destructive deletion, or send.
+
+Native Google Flights search completion and integrated microphone
+qualification remain separate from this implementation decision.

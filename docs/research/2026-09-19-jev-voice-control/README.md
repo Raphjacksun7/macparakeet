@@ -1,8 +1,10 @@
 # Jev-powered voice control: research and feature design
 
-**Date:** 2026-09-19. **Status:** researched proposal; not implemented, runtime-verified or released.
+**Date:** 2026-09-19, updated 2026-09-20. **Status:** implemented as a DEBUG-only experiment behind `--enable-voice-control`. Native Google Flights search completion and integrated microphone qualification are still pending. This is not a stable-release claim.
 
-[Open the interactive HTML feature walkthrough](walkthrough.html) for a visual tour of the planned experience, features and delivery stages.
+[Open the interactive HTML feature walkthrough](walkthrough.html) for a visual tour of the planned experience, features and delivery stages. Treat proposed UI in that walkthrough as research unless the [capability matrix](release-scope.md) marks the row implemented.
+
+Current evidence and remaining gaps: [findings 2026-09-20](findings-2026-09-20.md), [everyday use cases](everyday-use-cases.md), [testing handoff](testing-handoff.md).
 
 ## Recommendation
 
@@ -17,6 +19,7 @@ Jev is a strong fit for the action-selection path. It should evaluate the curren
 3. [Classifier/router and use-case catalog](routing-catalog.md): 14 question-head families, 25 proposed routes, 60+ utterances, model-free paths, clarification, correction, confirmation and error behavior.
 4. [Evaluation and rollout](evaluation.md): 30 task templates, 42 failure/correction families, independent oracles, route-specific metrics, proposed latency targets and accessibility/hardware/locale matrix.
 5. [Platform and additional implementations](platform-and-ecosystem.md): official Jev facts, measured-vs-claimed evidence, Jev Ultrafast source review, six additional open-source projects and current MacParakeet reuse boundaries.
+6. [North-star computer use](north-star-computer-use.md) and [what we adopted](north-star-adoption.md): synthesis of the `references/` Jev and computer-use checkouts, plus the everyday magic catalog in [everyday-use-cases.md](everyday-use-cases.md).
 
 ## What to take from each reference
 

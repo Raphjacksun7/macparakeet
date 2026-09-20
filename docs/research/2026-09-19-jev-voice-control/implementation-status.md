@@ -1,10 +1,22 @@
 # Native Voice Control implementation checkpoint
 
-Recorded September 19, 2026, 19:13 PDT. This is a local continuation record, not a claim of completed validation, an opened PR, or a stable release. The user requested local documentation now and a PR when the work is ready.
+Recorded September 20, 2026. This is a local continuation record for the
+`feat/jev-voice-control` PR, not a claim of completed Google Flights results
+or integrated microphone qualification.
 
 ## Current verdict
 
-The native-only feature and initial hardening are committed as `b6aabd10`. **122 focused tests passed** before the isolated PR gate's follow-up policy changes. Real Google Flights end-to-end completion, integrated microphone qualification, and a native demo remain pending in the recorded evidence. No PR or push has completed as of this checkpoint.
+Native Voice Control is implemented as a DEBUG experiment (`--enable-voice-control`).
+Local routes cover allowlisted sites, Flights form filling, ordinary web search
+boxes, Gmail Compose, and app activation. Joinable wide-event traces are on disk.
+A live typed Flights turn opened the site and filled Zurich/London/date, then
+stalled on the origin overlay (`duplicate_blocked` on Return/Escape). Fixture
+tests now refuse Return while that overlay is open. **ZRH→LON results have not
+been demonstrated.** See [findings-2026-09-20.md](findings-2026-09-20.md).
+
+A separate checkout at `/Users/dmoon/code/macparakeet-jev-pr` (`feat/jev-native-voice-control`)
+was a PR-gate snapshot of `b6aabd10` and does not include this later work. Do not
+rebase or reset either tree into the other.
 
 ## Two worktrees with separate owners
 

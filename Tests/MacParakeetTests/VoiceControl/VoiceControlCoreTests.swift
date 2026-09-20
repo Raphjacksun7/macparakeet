@@ -89,6 +89,65 @@ final class VoiceControlCoreTests: XCTestCase {
         XCTAssertEqual(Set(keys.keys), ["return", "escape", "tab", "none"])
     }
 
+    func testJevRequestOmitsAppSwitchingWhenPageControlsExist() async throws {
+        let capture = CoreRequestCapture()
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "from", label: "Where from?", role: "AXComboBox", operations: [.setValue, .press]),
+                VoiceControlTarget(
+                    id: "app:1", label: "Slack", role: "application", operations: [.activateApp]),
+                VoiceControlTarget(
+                    id: "web:google-flights", label: "Google Flights", role: "url", operations: [.press],
+                    isNavigation: true),
+            ])
+        let client = JevDecisionClient(
+            apiKey: "test", consent: { true },
+            transport: { request in
+                await capture.record(request.httpBody ?? Data())
+                return (
+                    Data(), HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
+                )
+            })
+        do { _ = try await client.decide(goal: "Find flights to London", snapshot: snapshot, history: []) } catch {}
+        let body = await capture.body
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let encoded = String(decoding: body, as: UTF8.self)
+        XCTAssertFalse(encoded.contains("Slack"))
+        XCTAssertFalse(encoded.contains("activateApp"))
+        XCTAssertFalse(encoded.contains("Google Flights"))
+        XCTAssertFalse(encoded.contains("web:google-flights"))
+        let questions = try XCTUnwrap(json["questions"] as? [String: [String: Any]])
+        XCTAssertNil(questions["target_activateApp"])
+        let observation = try XCTUnwrap((json["state"] as? [String: Any])?["observation"] as? [String: Any])
+        let targets = try XCTUnwrap(observation["targets"] as? [[String: Any]])
+        XCTAssertEqual(targets.map { $0["id"] as? String }, ["from"])
+    }
+
+    func testJevRequestOmitsURLDestinationsEvenWhenThePageHasNoControls() async throws {
+        let capture = CoreRequestCapture()
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "web:gmail", label: "Gmail", role: "url", operations: [.press], isNavigation: true),
+            ])
+        let client = JevDecisionClient(
+            apiKey: "test", consent: { true },
+            transport: { request in
+                await capture.record(request.httpBody ?? Data())
+                return (
+                    Data(), HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
+                )
+            })
+        do { _ = try await client.decide(goal: "open gmail", snapshot: snapshot, history: []) } catch {}
+        let body = await capture.body
+        let encoded = String(decoding: body, as: UTF8.self)
+        XCTAssertFalse(encoded.contains("web:gmail"))
+        XCTAssertFalse(encoded.contains("Gmail"))
+    }
+
     func testInformationNeedsNoEffectAndDoesNotRequireCompleteObservation() async {
         let runner = VoiceControlTurnRunner(adapter: CoreDirectAdapter(), engine: CoreInformationEngine())
         await runner.submit("help")

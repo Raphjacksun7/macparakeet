@@ -31,6 +31,8 @@ public actor VoiceControlTurnRunner {
     private var taskID = UUID()
     private var revision = 0
     private var traces: [VoiceControlTraceRecord] = []
+    private let sink: (any VoiceControlTraceSink)?
+    private var persistChain: Task<Void, Never>?
     private var lastSnapshot: VoiceControlSnapshot?
     private var referenceSnapshot: VoiceControlSnapshot?
     private var referenceAction: VoiceControlAction?
@@ -55,15 +57,19 @@ public actor VoiceControlTurnRunner {
     private var dispatchedStates: Set<DispatchIdentity> = []
     private var uncertainEffects: Set<EffectIdentity> = []
 
-    public init(adapter: any VoiceControlAdapter, engine: any VoiceControlDecisionEngine,
-                limits: VoiceControlTaskLimits = VoiceControlTaskLimits()) {
-        self.adapter = adapter; self.engine = engine; self.limits = limits
+    public init(
+        adapter: any VoiceControlAdapter, engine: any VoiceControlDecisionEngine,
+        limits: VoiceControlTaskLimits = VoiceControlTaskLimits(),
+        sink: (any VoiceControlTraceSink)? = nil
+    ) {
+        self.adapter = adapter; self.engine = engine; self.limits = limits; self.sink = sink
         let pair = AsyncStream<VoiceControlEvent>.makeStream(bufferingPolicy: .bufferingNewest(200))
         events = pair.stream; continuation = pair.continuation
     }
     deinit { expiryTask?.cancel(); continuation.finish() }
     public var hasTask: Bool { !goal.isEmpty && !cancelled }
     public func traceSnapshot() -> [VoiceControlTraceRecord] { traces }
+    public func flushTraces() async { await persistChain?.value }
     public nonisolated func stop() { gate.revoke() }
     public nonisolated func pauseForManualInput() { gate.revoke(manual: true) }
 
@@ -176,11 +182,70 @@ public actor VoiceControlTurnRunner {
     }
     private func record(_ stage: String, operation: VoiceControlOperation? = nil, outcome: String,
                         started: ContinuousClock.Instant? = nil, candidates: Int? = nil, complete: Bool? = nil,
-                        modelID: String? = nil, decisionScore: Double? = nil) {
-        traces.append(VoiceControlTraceRecord(id: UUID(), taskID: taskID, revision: revision, timestamp: Date(),
+                        modelID: String? = nil, decisionScore: Double? = nil,
+                        observation: VoiceControlSnapshot? = nil, action: VoiceControlAction? = nil,
+                        detail: String? = nil) {
+        let target = action.flatMap { act in observation?.targets.first { $0.id == act.targetID } }
+        let resolvedModel = action?.modelID ?? modelID
+        let key = action?.operation == .key ? action?.value?.lowercased() : nil
+        let record = VoiceControlTraceRecord(
+            id: UUID(), taskID: taskID, revision: revision, timestamp: Date(),
             stage: stage, operation: operation, outcome: outcome,
-            durationMilliseconds: started.map { Int(Self.seconds($0.duration(to: .now)) * 1000) }, candidateCount: candidates, observationComplete: complete, modelID: modelID, decisionScore: decisionScore))
+            durationMilliseconds: started.map { Int(Self.seconds($0.duration(to: .now)) * 1000) },
+            candidateCount: candidates, observationComplete: complete, modelID: resolvedModel,
+            decisionScore: decisionScore, detail: detail,
+            actor: Self.traceActor(modelID: resolvedModel, action: action),
+            route: resolvedRoute(stage: stage, action: action, modelID: resolvedModel, observation: observation),
+            targetID: action?.targetID,
+            targetLabel: Self.clipLabel(target?.label ?? action?.targetLabel),
+            keyName: key.flatMap { Self.tracedKeys.contains($0) ? $0 : nil })
+        traces.append(record)
         if traces.count > 256 { traces.removeFirst(traces.count - 256) }
+        enqueuePersist(record, instruction: stage == "task" && outcome == "started" ? goal : nil, observation: observation)
+    }
+    private static let tracedKeys: Set<String> = [
+        "tab", "escape", "return", "enter", "left", "right", "up", "down", "backspace", "delete",
+    ]
+    private static func clipLabel(_ label: String?) -> String? {
+        guard let label, !label.isEmpty else { return nil }
+        return label.count <= 120 ? label : String(label.prefix(120))
+    }
+    private static func traceActor(modelID: String?, action: VoiceControlAction?) -> String? {
+        if modelID == JevDecisionClient.model { return "jev" }
+        if action != nil || modelID == "local" { return "local" }
+        return nil
+    }
+    private func resolvedRoute(
+        stage: String, action: VoiceControlAction?, modelID: String?, observation: VoiceControlSnapshot?
+    ) -> String? {
+        if modelID == JevDecisionClient.model { return "jev" }
+        if stage == "policy", action == nil { return "policy" }
+        guard let action else { return nil }
+        if action.operation == .activateApp { return "app" }
+        if action.targetID.hasPrefix("web:"), action.operation == .press { return "destination" }
+        if VoiceControlFlightPlan.parse(goal) != nil { return "flight_plan" }
+        if VoiceControlWebQuery.parse(goal) != nil { return "web_query" }
+        if let observation,
+            VoiceControlNamedPageAction.next(command: goal, snapshot: observation, history: history) != nil
+        {
+            return "named_page"
+        }
+        if action.operation == .key { return "key" }
+        if action.operation == .setValue || action.operation == .insertText { return "fill" }
+        if action.operation == .press { return "press" }
+        return "local"
+    }
+    private func enqueuePersist(
+        _ record: VoiceControlTraceRecord, instruction: String?, observation: VoiceControlSnapshot?
+    ) {
+        guard let sink else { return }
+        let previous = persistChain
+        persistChain = Task {
+            await previous?.value
+            if let instruction { await sink.beginTask(id: record.taskID, instruction: instruction) }
+            if let observation { await sink.noteObservation(observation) }
+            await sink.record(record)
+        }
     }
     private func observe(authority: ActionAuthority) async throws -> VoiceControlSnapshot {
         let adapter = adapter
@@ -191,9 +256,13 @@ public actor VoiceControlTurnRunner {
         do {
             let snapshot = try await task.value
             try authority.check()
-            record("observation", outcome: snapshot.isComplete ? "complete" : "partial", started: start, candidates: snapshot.targets.count, complete: snapshot.isComplete)
+            record("observation", outcome: snapshot.isComplete ? "complete" : "partial", started: start, candidates: snapshot.targets.count, complete: snapshot.isComplete, observation: snapshot)
             return snapshot
-        } catch { record("observation", outcome: authority.isValid ? "failed" : "cancelled", started: start); throw error }
+        } catch {
+            let detail = (error as? NativeVoiceControlError).map(String.init(describing:))
+            record("observation", outcome: authority.isValid ? "failed" : "cancelled", started: start, detail: detail)
+            throw error
+        }
     }
     private func decision(snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws -> VoiceControlDecision {
         let engine = engine; let goal = effectiveGoal; let history = history
@@ -205,10 +274,24 @@ public actor VoiceControlTurnRunner {
             let decision = try await task.value
             try authority.check()
             if case .action(let action) = decision {
-                record("decision", operation: action.operation, outcome: "received", started: start, modelID: action.modelID, decisionScore: action.decisionConfidence)
+                record(
+                    "decision", operation: action.operation, outcome: "received", started: start,
+                    modelID: action.modelID, decisionScore: action.decisionConfidence,
+                    observation: snapshot, action: action)
+            } else if case .clarify = decision {
+                record("decision", outcome: "clarify", started: start)
             } else { record("decision", outcome: "received", started: start) }
             return decision
-        } catch { record("decision", outcome: authority.isValid ? "failed" : "cancelled", started: start); throw error }
+        } catch {
+            if let error = error as? JevDecisionError {
+                record(
+                    "decision", outcome: authority.isValid ? "failed" : "cancelled", started: start,
+                    modelID: JevDecisionClient.model, detail: String(describing: error))
+            } else {
+                record("decision", outcome: authority.isValid ? "failed" : "cancelled", started: start)
+            }
+            throw error
+        }
     }
     private var effectiveGoal: String {
         guard !amendments.isEmpty || !manualOverrides.isEmpty || !uncertainEffects.isEmpty else { return goal }
@@ -291,7 +374,16 @@ public actor VoiceControlTurnRunner {
                 continuation.yield(.deciding)
                 let next = alternativeDecision(snapshot)
                 let decision: VoiceControlDecision
-                if let next { decision = next } else { decision = try await self.decision(snapshot: snapshot, authority: authority) }
+                if let next {
+                    if case .action(let action) = next {
+                        record(
+                            "decision", operation: action.operation, outcome: "received",
+                            modelID: "local", observation: snapshot, action: action)
+                    } else if case .clarify = next {
+                        record("decision", outcome: "clarify", detail: "alternative")
+                    }
+                    decision = next
+                } else { decision = try await self.decision(snapshot: snapshot, authority: authority) }
                 try authority.check()
                 guard elapsedActive < limits.activeSeconds else {
                     record("budget", outcome: "active_time_exhausted")
@@ -310,7 +402,7 @@ public actor VoiceControlTurnRunner {
                     continuation.yield(.clarification(question)); return
                 case .action(let action):
                     guard let target = snapshot.targets.first(where: { $0.id == action.targetID }), target.operations.contains(action.operation) else {
-                        record("policy", outcome: "unoffered_target")
+                        record("policy", outcome: "unoffered_target", observation: snapshot, action: action)
                         continuation.yield(.failed("The requested control is no longer available.")); return
                     }
                     guard !isRepeated(action, snapshot: snapshot) else { return }
@@ -318,8 +410,20 @@ public actor VoiceControlTurnRunner {
                     if action.requiresConfirmation || consequence != .ordinary {
                         offerConfirmation(action, target: target, snapshot: snapshot, authority: authority, consequence: consequence); return
                     }
-                    record("policy", operation: action.operation, outcome: "ordinary_authorized")
-                    guard try await perform(action, snapshot: snapshot, authority: authority) else { return }
+                    record(
+                        "policy", operation: action.operation, outcome: "ordinary_authorized",
+                        observation: snapshot, action: action)
+                    do {
+                        guard try await perform(action, snapshot: snapshot, authority: authority) else { return }
+                    } catch let error as NativeVoiceControlError
+                        where error == .targetChanged || error == .changed || error == .observationExpired
+                            || error == .windowChanged
+                    {
+                        record(
+                            "dispatch", operation: action.operation, outcome: "stale_reobserve",
+                            observation: snapshot, action: action)
+                        continue
+                    }
                 }
             }
         } catch { report(error) }
@@ -328,7 +432,9 @@ public actor VoiceControlTurnRunner {
                                    authority: ActionAuthority, consequence: VoiceControlConsequence) {
         let id = UUID()
         pending = Pending(id: id, action: action, snapshot: snapshot, created: Date(), authority: authority)
-        record("policy", operation: action.operation, outcome: "confirmation_" + consequence.rawValue)
+        record(
+            "policy", operation: action.operation, outcome: "confirmation_" + consequence.rawValue,
+            observation: snapshot, action: action)
         let prefix = consequence == .ordinary ? "Apply this replacement" : consequence == .unknown ? "Allow this action with an unverified consequence" : "Confirm " + consequence.rawValue
         continuation.yield(.confirmation(action, prefix + " on \(target.label)?" + (action.requiresConfirmation ? "\n" + String((action.value ?? "").prefix(1_000)) : "")))
         expiryTask?.cancel()
@@ -351,14 +457,25 @@ public actor VoiceControlTurnRunner {
         let effect = effectIdentity(action, snapshot: snapshot)
         referenceSnapshot = snapshot; referenceAction = action; referenceTime = Date()
         continuation.yield(.acting(action))
-        record("dispatch", operation: action.operation, outcome: "started")
+        record("dispatch", operation: action.operation, outcome: "started", observation: snapshot, action: action)
         let start = ContinuousClock.now
         let receipt: VoiceControlReceipt
         do { receipt = try await adapter.execute(action: action, snapshot: snapshot, authority: authority) }
+        catch let error as NativeVoiceControlError
+            where error == .targetChanged || error == .changed || error == .observationExpired
+                || error == .windowChanged
+        {
+            record(
+                "dispatch", operation: action.operation, outcome: "stale_target", started: start,
+                observation: snapshot, action: action)
+            throw error
+        }
         catch {
             uncertainEffects.insert(effect)
             history.append(historyAction(action, snapshot: snapshot, status: .unknown))
-            record("dispatch", operation: action.operation, outcome: "unknown_error", started: start)
+            record(
+                "dispatch", operation: action.operation, outcome: "unknown_error", started: start,
+                observation: snapshot, action: action)
             throw error
         }
         history.append(historyAction(action, snapshot: snapshot, status: receipt.status))
@@ -366,12 +483,16 @@ public actor VoiceControlTurnRunner {
         let consequence = target.map { VoiceControlConsequencePolicy.consequence(of: action, target: $0) } ?? .unknown
         let unverifiedCommitment = receipt.status == .transitionObserved && consequence != .ordinary
         if receipt.status == .unknown || unverifiedCommitment { uncertainEffects.insert(effect) }
-        record("verification", operation: action.operation, outcome: receipt.status.rawValue, started: start)
+        record(
+            "verification", operation: action.operation, outcome: receipt.status.rawValue, started: start,
+            observation: snapshot, action: action)
         let label = snapshot.targets.first(where: { $0.id == action.targetID })?.label ?? "Control"
         continuation.yield(.activity(label + " — " + (receipt.status == .verified ? "verified" : receipt.status == .transitionObserved ? "interface changed" : receipt.status == .unknown ? "outcome uncertain" : "failed")))
         try authority.check()
         if unverifiedCommitment {
-            record("policy", operation: action.operation, outcome: "commitment_outcome_unverified")
+            record(
+                "policy", operation: action.operation, outcome: "commitment_outcome_unverified",
+                observation: snapshot, action: action)
             continuation.yield(.paused("The interface changed, but the outcome of \(label) was not verified. Check whether it completed before continuing. This effect will not be repeated."))
             return false
         }
@@ -386,11 +507,15 @@ public actor VoiceControlTurnRunner {
     }
     private func isRepeated(_ action: VoiceControlAction, snapshot: VoiceControlSnapshot) -> Bool {
         if uncertainEffects.contains(effectIdentity(action, snapshot: snapshot)) {
-            record("policy", operation: action.operation, outcome: "uncertain_replay_blocked")
+            record(
+                "policy", operation: action.operation, outcome: "uncertain_replay_blocked",
+                observation: snapshot, action: action)
             continuation.yield(.clarification("That effect has an uncertain outcome and will not be repeated. Check the app and describe a different next step.")); return true
         }
         if dispatchedStates.contains(dispatchIdentity(action, snapshot: snapshot)) {
-            record("policy", operation: action.operation, outcome: "duplicate_blocked")
+            record(
+                "policy", operation: action.operation, outcome: "duplicate_blocked",
+                observation: snapshot, action: action)
             continuation.yield(.paused("That action already ran against this interface. Fix the state or revise the request.")); return true
         }
         return false
@@ -410,8 +535,15 @@ public actor VoiceControlTurnRunner {
             record("task", outcome: "paused")
             continuation.yield(.paused("Stopped. You can correct the task or Continue."))
         } else if let error = error as? JevDecisionError {
+            record("task", outcome: "failed", modelID: JevDecisionClient.model, detail: String(describing: error))
             continuation.yield(.failed(error.localizedDescription))
-        } else { continuation.yield(.failed("Voice Control could not continue. Check the app and connection.")) }
+        } else if let error = error as? NativeVoiceControlError {
+            record("task", outcome: "failed", detail: String(describing: error))
+            continuation.yield(.failed(error.localizedDescription))
+        } else {
+            record("task", outcome: "failed", detail: "unclassified")
+            continuation.yield(.failed("Voice Control could not continue. Check the app and connection."))
+        }
     }
 }
 

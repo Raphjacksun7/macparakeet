@@ -32,10 +32,16 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         // A verified direct action has finished this single-command route. The goal
         // loop for open-ended requests remains delegated to the semantic engine.
         func result(_ action: VoiceControlAction) -> VoiceControlDecision {
-            history.isEmpty
-                ? .action(action)
-                : (history.last?.receiptStatus == .verified
-                    ? .directCompleted("Done. The requested change was verified.") : .finished)
+            if history.isEmpty { return .action(action) }
+            if let last = history.last, last.receiptStatus == .verified,
+                last.targetID == action.targetID
+                    || (last.operation == action.operation
+                        && last.targetLabel?.caseInsensitiveCompare(action.targetLabel ?? "") == .orderedSame
+                        && !(action.targetLabel ?? "").isEmpty)
+            {
+                return .directCompleted("Done. The requested change was verified.")
+            }
+            return history.last?.receiptStatus == .verified ? .action(action) : .finished
         }
         for prefix in ["type the words ", "type literally ", "type "] where lower.hasPrefix(prefix) {
             guard focused.count == 1 else { return .clarify("Focus one editable field before typing.") }
@@ -75,7 +81,8 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
                 return .directCompleted("Done. The requested change was verified.")
             }
             let matches = snapshot.targets.filter {
-                $0.label.caseInsensitiveCompare(label) == .orderedSame
+                $0.role != "url"
+                    && $0.label.caseInsensitiveCompare(label) == .orderedSame
                     && ($0.operations.contains(.press) || $0.operations.contains(.activateApp))
             }
             if matches.count == 1 {
@@ -85,6 +92,48 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
                         targetID: matches[0].id))
             }
             if matches.count > 1 { return .clarify("More than one control is named \(label). Describe which one.") }
+        }
+        if let destination = VoiceControlWebDestination.matchingGoal(lower),
+            snapshot.targets.contains(where: { $0.id == destination.id }),
+            !VoiceControlWebDestination.pageMatches(snapshot, destination: destination),
+            !VoiceControlWebDestination.wasOpened(destination, history: history)
+        {
+            return .action(VoiceControlAction(operation: .press, targetID: destination.id, consequence: .ordinary))
+        }
+        if let plan = VoiceControlFlightPlan.parse(command),
+            VoiceControlWebDestination.isCurrent(
+                VoiceControlWebDestination.named("web:google-flights") ?? VoiceControlWebDestination.all[0],
+                snapshot: snapshot, history: history),
+            let action = plan.nextAction(in: snapshot, history: history)
+        {
+            return .action(action)
+        }
+        if let query = VoiceControlWebQuery.parse(command),
+            let destination = VoiceControlWebDestination.named(query.destinationID),
+            VoiceControlWebDestination.isCurrent(destination, snapshot: snapshot, history: history),
+            let action = query.nextAction(in: snapshot, history: history)
+        {
+            return .action(action)
+        }
+        if let action = VoiceControlNamedPageAction.next(command: command, snapshot: snapshot, history: history) {
+            return .action(action)
+        }
+        if let browser = Self.browserForWebGoal(lower, snapshot: snapshot) {
+            return .action(VoiceControlAction(operation: .activateApp, targetID: browser.id))
+        }
+        if let requested = Self.requestedApplication(lower) {
+            let current = snapshot.applicationName.lowercased()
+            let alreadyFront = current == requested || current.contains(requested) || requested.contains(current)
+            if alreadyFront {
+                return .information("\(snapshot.applicationName) is already in front.")
+            }
+            let apps = snapshot.targets.filter {
+                $0.operations.contains(.activateApp) && Self.application(named: $0.label, matches: requested)
+            }
+            if apps.count == 1 {
+                return result(VoiceControlAction(operation: .activateApp, targetID: apps[0].id))
+            }
+            if apps.count > 1 { return .clarify("Which \(apps[0].label) window should I open?") }
         }
         if ["undo", "undo that", "undo last edit"].contains(lower),
             let target = snapshot.targets.first(where: { $0.role == "undo" })
@@ -146,6 +195,41 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
             where: lower.hasPrefix)
             || ["undo", "undo that", "undo last edit", "scroll down", "scroll up"].contains(lower)
     }
+    static func requestedApplication(_ lower: String) -> String? {
+        let prefixes = ["open up ", "switch to ", "go to ", "open "]
+        guard let prefix = prefixes.first(where: { lower.hasPrefix($0) }) else { return nil }
+        var name = String(lower.dropFirst(prefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        if name.hasSuffix(" app") { name = String(name.dropLast(4)) }
+        if name.hasPrefix("the ") { name = String(name.dropFirst(4)) }
+        return name.isEmpty || name.split(separator: " ").count > 4 ? nil : name
+    }
+    static func application(named label: String, matches requested: String) -> Bool {
+        let app = label.lowercased()
+        return app == requested || app.contains(requested) || requested.contains(app)
+            || (requested == "chrome" && app.contains("chrome"))
+    }
+    /// Web tasks should start in a browser, not the terminal or IDE that issued the command.
+    static func browserForWebGoal(_ lower: String, snapshot: VoiceControlSnapshot) -> VoiceControlTarget? {
+        guard !isBrowserName(snapshot.applicationName) else { return nil }
+        let hints = [
+            "flight", "flights", "youtube", "gmail", "search the web", "google search", "google for",
+            "in chrome", "in safari", "in firefox", "in brave", "in edge", "google maps",
+            "wikipedia", "directions to",
+        ]
+        guard hints.contains(where: { lower.contains($0) }) else { return nil }
+        let browsers = snapshot.targets.filter {
+            $0.operations.contains(.activateApp) && isBrowserName($0.label)
+        }
+        if lower.contains("safari") { return browsers.first { $0.label.lowercased().contains("safari") } }
+        if lower.contains("firefox") { return browsers.first { $0.label.lowercased().contains("firefox") } }
+        if let chrome = browsers.first(where: { $0.label.lowercased().contains("chrome") }) { return chrome }
+        return browsers.count == 1 ? browsers[0] : nil
+    }
+    static func isBrowserName(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return ["chrome", "safari", "firefox", "edge", "brave", "arc"].contains { lower.contains($0) }
+    }
     private func contextualHelp(_ snapshot: VoiceControlSnapshot) -> String {
         var lines = ["Commands available in \(snapshot.applicationName):"]
         let uniqueLabels = Dictionary(grouping: snapshot.targets, by: { $0.label.lowercased() })
@@ -180,7 +264,7 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         }
         if !snapshot.isComplete { lines.append("Only part of this interface was observed.") }
         lines.append(
-            "Say Stop to pause, or End Voice Control to end the session. Unknown actions ask for confirmation.")
+            "Say Stop to pause, or End Voice Control to end the session. Only pay, delete, or send asks for confirmation.")
         return lines.joined(separator: "\n")
     }
 

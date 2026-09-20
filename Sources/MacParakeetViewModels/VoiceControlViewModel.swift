@@ -46,9 +46,12 @@ public final class VoiceControlViewModel {
     public var activityExpanded = false
     public var diagnosticsExpanded = false
     public var diagnosticsText = ""
-    public var diagnosticsStatus = "In-memory stages and outcomes. Commands and app text are excluded."
+    public var diagnosticsStatus = "Saved on this Mac. Copy diagnostics omits the instruction and labels."
+    public var diagnosticsLogPath = VoiceControlTraceStore.defaultLatestURL.path
     public var onRefreshDiagnostics: (() -> Void)?
     public var onCopyDiagnostics: (() -> Void)?
+    public var onOpenDiagnosticsFolder: (() -> Void)?
+    public var onCopyDiagnosticsPath: (() -> Void)?
     public var transcript = ""
     public var partialTranscript = ""
     public var message = "Hold Control–Option–Space to give an instruction."

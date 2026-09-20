@@ -103,11 +103,21 @@ struct VoiceControlPanelView: View {
                     DisclosureGroup("Diagnostics", isExpanded: $model.diagnosticsExpanded) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(model.diagnosticsStatus).font(.caption).foregroundStyle(.secondary)
+                            Text(model.diagnosticsLogPath)
+                                .font(.system(.caption2, design: .monospaced))
+                                .textSelection(.enabled)
+                                .foregroundStyle(.secondary)
                             HStack {
                                 Button("Refresh", action: { model.onRefreshDiagnostics?() }).parakeetAction(.subtle)
+                                Button("Open folder", action: { model.onOpenDiagnosticsFolder?() }).parakeetAction(.subtle)
+                            }
+                            HStack {
+                                Button("Copy log path", action: { model.onCopyDiagnosticsPath?() }).parakeetAction(.subtle)
                                 Button("Copy diagnostics", action: { model.onCopyDiagnostics?() }).parakeetAction(.subtle)
                                     .disabled(model.diagnosticsText.isEmpty)
                             }
+                            Text("Copy diagnostics omits the instruction and labels so it is safer to paste.")
+                                .font(.caption2).foregroundStyle(.secondary)
                             if !model.diagnosticsText.isEmpty {
                                 ScrollView([.vertical, .horizontal]) {
                                     Text(model.diagnosticsText).font(.system(.caption, design: .monospaced))

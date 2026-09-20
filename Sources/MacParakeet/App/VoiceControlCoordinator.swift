@@ -20,6 +20,7 @@ final class VoiceControlCoordinator {
     private let rewrite: VoiceControlCommandRouter.Rewrite?
     private let credentials = VoiceControlCredentialStore()
     private let consent = VoiceControlConsentStore()
+    private let traces = VoiceControlTraceStore()
     private let isStartSuppressed: () -> Bool
     private let conflictingHotkeys: () -> [HotkeyTrigger]
     private let onShortcutChanged: () -> Void
@@ -34,6 +35,7 @@ final class VoiceControlCoordinator {
     private var admissionRelease: Task<Void, Never>?
     private var invocationSnapshot: VoiceControlSnapshot?
     private var speechSubmission = false
+    private var skipInvocationSnapshot = false
     private var currentCaptureID: UUID?
     private var currentUtteranceID: UUID?
     private var invocationSnapshotTask: Task<VoiceControlSnapshot?, Never>?
@@ -75,6 +77,7 @@ final class VoiceControlCoordinator {
             if !recording { self?.installHotkey() }
         }
         model.needsSetup = !consent.hasConsent || (try? credentials.loadAPIKey()) == nil
+        model.diagnosticsLogPath = VoiceControlTraceStore.defaultLatestURL.path
         model.onListen = { [weak self] in self?.beginCapture(handsFree: true) }
         model.onCommit = { [weak self] in self?.commitCapture() }
         model.onStop = { [weak self] in self?.stop() }
@@ -83,6 +86,8 @@ final class VoiceControlCoordinator {
         model.onEnd = { [weak self] in self?.end() }
         model.onRefreshDiagnostics = { [weak self] in self?.refreshDiagnostics() }
         model.onCopyDiagnostics = { [weak self] in self?.refreshDiagnostics(copy: true) }
+        model.onOpenDiagnosticsFolder = { [weak self] in self?.openDiagnosticsFolder() }
+        model.onCopyDiagnosticsPath = { [weak self] in self?.copyDiagnosticsPath() }
         model.onConfirm = { [weak self] in self?.confirm() }
         model.onResume = { [weak self] in self?.resume() }
         model.onSubmit = { [weak self] in self?.submit($0) }
@@ -115,6 +120,7 @@ final class VoiceControlCoordinator {
                 self?.handleSpeech(event)
             }
         }
+        startInboxMonitor()
     }
 
     func installHotkey() {
@@ -266,13 +272,16 @@ final class VoiceControlCoordinator {
             selectionAtInvocation: { [weak self] in
                 await MainActor.run { self?.invocationSnapshot }
             })
-        let runner = VoiceControlTurnRunner(adapter: adapter, engine: router)
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: router, sink: traces)
         self.runner = runner
         runnerEvents?.cancel()
         runnerEvents = Task { [weak self, runner] in
             for await event in runner.events {
                 guard !Task.isCancelled, let self, self.acceptingEvents else { return }
                 self.model.apply(event)
+                let phase = "\(self.model.phase)"
+                let message = self.model.message
+                Task { await self.traces.noteStatus(phase: phase, message: message) }
                 switch event {
                 case .completed, .failed, .cancelled, .paused: self.releaseFinishedSessionIfMicOff()
                 default: break
@@ -381,6 +390,63 @@ final class VoiceControlCoordinator {
             releaseFinishedSessionIfMicOff()
         }
     }
+    private func startInboxMonitor() {
+        let urls = [
+            VoiceControlTraceStore.defaultDirectory.appendingPathComponent("command.json"),
+            VoiceControlTraceStore.agentPointerDirectory.appendingPathComponent("command.json"),
+        ]
+        for url in urls {
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self else { return }
+                for url in urls {
+                    guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                    let raw = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+                    try? FileManager.default.removeItem(at: url)
+                    guard let command = VoiceControlInboxCommand.parse(raw) else { continue }
+                    self.handleInbox(command)
+                    break
+                }
+            }
+        }
+    }
+    private func handleInbox(_ command: VoiceControlInboxCommand) {
+        Task { [weak self] in
+            guard let self else { return }
+            if let activate = command.activate {
+                _ = await self.bringAppForward(activate)
+            }
+            self.show()
+            self.skipInvocationSnapshot = true
+            switch command.action {
+            case .submit: self.submit(command.text)
+            case .revise: self.dispatch(command.text, asRevision: true)
+            case .continueTask: self.resume()
+            case .confirm: self.confirm()
+            case .stop: self.stop()
+            case .cancel: self.cancelTask()
+            }
+        }
+    }
+    private func bringAppForward(_ name: String) async -> Bool {
+        var app = VoiceControlAppActivation.runningApplication(matching: name)
+        if app == nil {
+            let bundleID: String? =
+                name.lowercased().contains("chrome") ? "com.google.Chrome"
+                : name.lowercased().contains("safari") ? "com.apple.Safari"
+                : name.lowercased().contains("firefox") ? "org.mozilla.firefox"
+                : name.contains(".") ? name : nil
+            if let bundleID {
+                app = await VoiceControlAppActivation.launch(bundleIdentifier: bundleID)
+            }
+        }
+        guard let app else { return false }
+        return await VoiceControlAppActivation.bringForward(app)
+    }
     private func submit(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, ensureSession() else { return }
@@ -438,9 +504,9 @@ final class VoiceControlCoordinator {
             self.admissionRelease = nil
         }
     }
-    private func dispatch(_ text: String) {
+    private func dispatch(_ text: String, asRevision: Bool = false) {
         let submission = submissions.begin()
-        let correction = !model.goal.isEmpty && VoiceControlConversationState.isCorrection(text)
+        let correction = asRevision || (!model.goal.isEmpty && VoiceControlConversationState.isCorrection(text))
         if !correction && model.conversation.expectedResponse != .clarification {
             model.goal = text; model.steps = []
         }
@@ -451,7 +517,8 @@ final class VoiceControlCoordinator {
         runner?.stop()
         guard let runner else { return }
         let clarification = model.conversation.takeClarification()
-        let needsSnapshot = !speechSubmission
+        let needsSnapshot = !speechSubmission && !skipInvocationSnapshot
+        skipInvocationSnapshot = false
         let snapshotTask = invocationSnapshotTask
         let speechUtterance = currentUtteranceID
         let generation = sessionGeneration
@@ -526,31 +593,75 @@ final class VoiceControlCoordinator {
         }
     }
     private func refreshDiagnostics(copy: Bool = false) {
-        guard let runner else {
-            model.diagnosticsText = ""
-            model.diagnosticsStatus = "No active or recent task diagnostics."
-            return
-        }
-        let generation = sessionGeneration
+        let runner = runner
+        let traces = traces
         Task { [weak self] in
-            let records = await runner.traceSnapshot()
-            guard let self, self.sessionGeneration == generation, self.runner === runner else { return }
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            guard let data = try? encoder.encode(records), let text = String(data: data, encoding: .utf8) else {
-                self.model.diagnosticsStatus = "Could not format diagnostics."
-                return
+            if let runner { await runner.flushTraces() }
+            let session = await traces.loadLatest()
+            let records = if let runner { await runner.traceSnapshot() } else { session?.records ?? [] }
+            guard let self else { return }
+            self.model.diagnosticsLogPath = VoiceControlTraceStore.defaultLatestURL.path
+            if let session, let data = try? Self.sessionEncoder.encode(session),
+                let text = String(data: data, encoding: .utf8)
+            {
+                self.model.diagnosticsText = text
+                self.model.diagnosticsStatus =
+                    "\(records.count) records saved locally. Instruction and control labels stay on this Mac."
+            } else {
+                let encoder = Self.shareableEncoder
+                guard let data = try? encoder.encode(records), let text = String(data: data, encoding: .utf8) else {
+                    self.model.diagnosticsStatus = "Could not format diagnostics."
+                    return
+                }
+                self.model.diagnosticsText = records.isEmpty ? "" : text
+                self.model.diagnosticsStatus =
+                    records.isEmpty
+                    ? "No task log yet. After a turn, latest.json is written on this Mac."
+                    : "\(records.count) shareable records. Commands and labels are excluded."
             }
-            self.model.diagnosticsText = records.isEmpty ? "" : text
-            self.model.diagnosticsStatus = "\(records.count) in-memory records. Commands and app text are excluded."
-            if copy, !records.isEmpty {
+            if copy {
+                let export = VoiceControlShareableDiagnostics.make(
+                    schema: VoiceControlTraceStore.schema, taskID: session?.taskID,
+                    summary: session?.summary, records: records)
+                let encoder = Self.shareableEncoder
+                guard let data = try? encoder.encode(export), let text = String(data: data, encoding: .utf8),
+                    !records.isEmpty
+                else { return }
                 NSPasteboard.general.clearContents()
                 if NSPasteboard.general.setString(text, forType: .string) {
-                    self.model.diagnosticsStatus = "Copied diagnostics to the clipboard. Nothing was uploaded."
+                    self.model.diagnosticsStatus =
+                        "Copied shareable diagnostics. Instruction and labels were omitted. Nothing was uploaded."
                 }
             }
         }
+    }
+    private func openDiagnosticsFolder() {
+        let latest = VoiceControlTraceStore.defaultLatestURL
+        if FileManager.default.fileExists(atPath: latest.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([latest])
+        } else {
+            NSWorkspace.shared.open(VoiceControlTraceStore.defaultDirectory)
+        }
+        model.diagnosticsStatus = "Opened the local log folder. Nothing was uploaded."
+    }
+    private func copyDiagnosticsPath() {
+        let path = VoiceControlTraceStore.defaultLatestURL.path
+        NSPasteboard.general.clearContents()
+        if NSPasteboard.general.setString(path, forType: .string) {
+            model.diagnosticsStatus = "Copied log path. The file stays on this Mac."
+        }
+    }
+    private static var sessionEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+    private static var shareableEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
     }
 
     private func end(hide: Bool = true, preservePresentation: Bool = false) {
@@ -560,7 +671,7 @@ final class VoiceControlCoordinator {
         speech.revokePendingTranscripts()
         acceptingEvents = false; wantsCapture = false; sessionGeneration += 1
         model.diagnosticsText = ""
-        model.diagnosticsStatus = "Task ended. Diagnostics cleared."
+        model.diagnosticsStatus = "Task ended. Logs kept on this Mac."
         currentCaptureID = nil; currentUtteranceID = nil
         invocationSnapshotTask?.cancel(); invocationSnapshotTask = nil
         if !preservePresentation { literalMode = false; model.literalMode = false }
@@ -578,6 +689,7 @@ final class VoiceControlCoordinator {
             await priorAdmissionRelease?.value
             await priorCapture?.value
             await priorExecution?.value
+            await currentRunner?.flushTraces()
             await currentRunner?.cancelAndDrain()
             guard let self else { return }
             if let lease { GUIMutationArbiter.shared.release(lease) }

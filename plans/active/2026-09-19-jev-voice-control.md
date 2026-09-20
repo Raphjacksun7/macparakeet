@@ -13,10 +13,10 @@
 > envelope; current implementation/evidence is in the capability matrix.
 
 
-**Status:** RESEARCHED PROPOSAL — no implementation or release approval implied.  
-**Date:** 2026-09-19. **Owner:** MacParakeet product/core app.  
+**Status:** IMPLEMENTED behind `--enable-voice-control` (DEBUG). Native Flights results and microphone qualification remain open.  
+**Date:** 2026-09-19, updated 2026-09-20. **Owner:** MacParakeet product/core app.  
 **Origin:** User request for a full voice-control feature, deep source research, classifier/router mapping and excellent everyday UI/UX. Jev is the requested semantic decision engine.  
-**Evidence:** [Research index](../../docs/research/2026-09-19-jev-voice-control/README.md), [route catalog](../../docs/research/2026-09-19-jev-voice-control/routing-catalog.md), [evaluation](../../docs/research/2026-09-19-jev-voice-control/evaluation.md).
+**Evidence:** [Research index](../../docs/research/2026-09-19-jev-voice-control/README.md), [findings](../../docs/research/2026-09-19-jev-voice-control/findings-2026-09-20.md), [route catalog](../../docs/research/2026-09-19-jev-voice-control/routing-catalog.md), [evaluation](../../docs/research/2026-09-19-jev-voice-control/evaluation.md).
 
 ## Product decision
 

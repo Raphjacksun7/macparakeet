@@ -20,12 +20,16 @@ hands-free session from the menu. Speech uses the existing local microphone and
 STT scheduler; command audio and instructions do not enter dictation history.
 
 After separate cloud consent, Jev selects typed actions over current native
-Accessibility controls, including browser webpage content. The runner can
-retain a goal across changing controls, enter literal text, replace an exact
-phrase, scroll, activate an app, and request confirmation for consequential
-commitments. Selected-text rewrites use the configured writing provider
-with separate consent. Stop revokes queued actions; unknown outcomes pause and
-are not replayed. Model-inferred completion is labeled as such.
+Accessibility controls, including browser webpage content. Unique next steps
+are handled locally: allowlisted site opens, Google Flights form filling,
+ordinary web-search boxes, Gmail Compose, exact clicks, and app activation.
+Jev is not offered `role=url` destinations. The runner can retain a goal
+across changing controls, enter literal text, replace an exact phrase, scroll,
+activate an app, and request confirmation for pay/delete/send. Selected-text
+rewrites use the configured writing provider with separate consent. Stop
+revokes queued actions; unknown outcomes pause and are not replayed.
+Model-inferred completion is labeled as such. After a turn, local
+`latest.md` is the wide event; Copy diagnostics omits instruction and labels.
 
 This branch's feature remains development-only, enabled with
 `--enable-voice-control` in a Debug app. It is not part of the stable DMG.

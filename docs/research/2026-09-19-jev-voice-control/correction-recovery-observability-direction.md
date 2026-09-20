@@ -1,7 +1,9 @@
 # Correction, recovery, mixed input, and command observability
 
-Date: 2026-09-19. Research and product-direction note for the main agent.
-This document records user intent and design recommendations, not implemented behavior or runtime qualification. Preserve implementation freedom; the examples specify outcomes, not a required class hierarchy.
+Date: 2026-09-19, implementation note 2026-09-20.
+Research and product-direction note that the current branch now implements.
+Correction, recovery, mixed-input pause, and local traces are in the runner
+and contract; remaining work is qualification, not a missing architecture.
 
 ## Settled user direction
 

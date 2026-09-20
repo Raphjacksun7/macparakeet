@@ -167,8 +167,27 @@ utterance that supersedes unfinished recognition is identified in task activity.
 The panel displays the original goal, current instruction, stopping reason and an
 expandable activity list bounded to 100 entries. Attempting an action is not a
 success receipt. Verified effects, observed transitions and unknown effects remain
-distinct. Activity is ephemeral and clears on End; no default audio, screenshot,
-full command or UI-text history is persisted or uploaded for diagnostics.
+distinct. Activity is ephemeral and clears on End. No audio, screenshot, field
+value, selected text, credential or remote body is persisted or uploaded.
+
+The runner keeps bounded in-memory diagnostic records containing task/revision
+IDs, stage, operation, outcome, actor, route, target id, control label, closed
+key names, candidate counts and elapsed timing. Local session logs may include
+the instruction and control labels. They exclude field values, selected text,
+screenshots, audio, credentials and remote error bodies. Copy diagnostics writes
+a shareable payload that keeps opaque ids and strips instruction and labels.
+
+`VoiceControlTraceStore` writes a local session log to
+`AppPaths.voiceControlLogsDir` (`latest.md`, `latest.json`, `events.jsonl` and
+`sessions/`). Debug app-state overrides keep that folder inside the throwaway
+root. `latest.md` is the wide event for the current turn. `latest.json` adds
+joinable per-step records and offered controls. `events.jsonl` streams the same
+step records plus one `type=turn` line when the turn stops. Field values and
+selected text stay out. End clears the panel and does not delete the log.
+Retention is the last 20 sessions. A pointer copy is also written to
+`/tmp/macparakeet-voice-control/latest.md`. The experimental panel exposes the
+log path with Refresh, Open folder, Copy log path, and Copy diagnostics. Copy
+diagnostics still omits the instruction and labels.
 
 ## Decisions, effects and completion
 
@@ -206,18 +225,14 @@ confirmation. Clarifying a target is distinct from consequence authorization.
 Repeated actions against the same observed state are rejected to avoid duplicate
 effects; correcting a goal must not erase unknown-effect or execution history.
 
-The runner keeps bounded in-memory diagnostic records containing task/revision
-IDs, stage, operation, outcome, candidate counts and elapsed timing. These records
-exclude commands, field values, selected text, screenshots, audio, keys and remote
-error bodies. They are distinct from the ephemeral user-visible activity panel.
-The experimental panel exposes actual records in an expandable Diagnostics view
-with explicit Refresh and Copy diagnostics actions. Copy writes only these
-content-minimized records to the local clipboard; it does not save a file or
-upload anything. End clears the panel diagnostics.
-
 Supported exact local routes include literal text entry, unambiguous label
-selection, offered navigation keys, scrolling, advertised undo and precise
-single-occurrence replacement. Literal mode treats utterances as text; isolated
+selection, offered navigation keys, scrolling, advertised undo, precise
+single-occurrence replacement, activating a uniquely named running app,
+opening an allowlisted web destination, filling an already-open search box
+on YouTube/Maps/Wikipedia/Google Search, pressing unique Gmail Compose, and
+the Google Flights form plan (trip type, origin, destination, date, unique
+autocomplete, overlay Escape, Search). Jev is never offered `role=url`
+destinations. Literal mode treats utterances as text; isolated
 `command mode` exits and `command stop` pauses. `type literally command mode`
 enters those words. Prefix handling must preserve the payload rather than
 shortening or stripping arbitrary fillers. Selected-text rewriting uses the
