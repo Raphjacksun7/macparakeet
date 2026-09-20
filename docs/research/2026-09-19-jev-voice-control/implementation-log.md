@@ -69,3 +69,22 @@ speech/confirmation and packaged installation evidence still need separate check
 - Hardened integration rerun: 105 tests passed, zero failures at 17:53 local. Includes five native registration tests and contextual-help/Unicode replacement regressions. Dev/dist scripts pass `bash -n`.
 - Browser host and extension now embed in dev/dist bundles; native setup registers an exact extension ID with explicit replacement and secure file handling. A browser listener can start without microphone capture. Web Store publication is still separate.
 - Native review found hidden/offscreen controls, ambiguous AX read failures, cross-window undo and stale foreground checks. Observation now requires visible geometry before reading values/offering controls; required edit values fail closed; undo retains its original window; effects recheck foreground ownership. Generic checkboxes/links require confirmation because their semantics can be consequential. These require runtime rerun in the disposable fixture.
+
+## Preserved checkpoint before native-only direction
+
+Implementation is committed through `b85642a5`, following research checkpoint
+`b8bc41e0` and first implementation `36a2c337`. The user subsequently supplied
+[native-accessibility-direction.md](native-accessibility-direction.md) as the
+governing product direction: browser control must work through native macOS
+Accessibility without requiring an extension. At this checkpoint, extension
+product wiring and packaging still exist; the direction change has been reviewed
+but not applied. Preserve earlier browser evidence as historical evidence only.
+
+The signed development-app build attempted through `scripts/dev/run_app.sh`
+stopped during Xcode package resolution with “Couldn’t update repository
+submodules.” It did not launch a new app or establish microphone/UI qualification.
+The installed Homebrew Git provides its helpers at
+`/opt/homebrew/opt/git/libexec/git-core`; retrying with the appropriate
+`GIT_EXEC_PATH` remains to be done. The local Greptile review could not run because
+its CLI was not signed in. Neither attempted check is a passing review/build.
+The full Swift suite, final qualification and PR delivery remain outstanding.
