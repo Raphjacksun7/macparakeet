@@ -26,3 +26,12 @@ Invariants: normal dictation never interprets commands; existing dictation inser
 ## Verification discipline
 
 Focused suites during implementation; full Swift suite at most once as final gate. No live behavior claimed from mocks. Record exact commands, results and limitations. API use only with sanitized fixtures or explicitly enabled feature context. No credential content in command output.
+
+## First implementation checkpoint
+
+- Fable 5.1 medium source review completed before implementation; full report in `implementation-fable-review.md`. Adopted separate raw command capture, new AX subsystem, shared GUI admission, dedicated Jev client and AX-first goal proof. Browser extension remains full scope.
+- `swift test --filter VoiceControl` passed: 22 tests, zero failures (2026-09-19 17:26 local). This compiles app/core/view-model/browser-host targets. Earlier concurrent source edits invalidated two builds; these were not test failures and the settled run passed.
+- Browser worker ran nine real Playwright DOM checks, passing; detailed browser artifacts/README owned by that subsystem.
+- Live Swift Jev client tested only synthetic form context: destination London selected correctly (~385ms); negated search caused no action (~109ms); compound source/destination requests produced correct origin selection in several runs and clarification in others. One response failed strict validation; later probes observed probability sums of 0.99, so rounding tolerance needs a regression check. These are model-call durations, not voice-to-effect latency.
+- Review caught incomplete selected-text data loss; adapters now omit over-limit selections rather than rewrite a prefix over the full range.
+- Outstanding before qualification: richer observed transitions for generic presses, direct-route terminal bookkeeping, hands-free cancellation/partial preview hardening, native fixture/hardware trials and full scope audit. This checkpoint is not release ready.

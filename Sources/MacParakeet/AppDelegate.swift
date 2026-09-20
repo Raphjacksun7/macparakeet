@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `TransformsHotkeyRegistry` + dispatch from registered hotkeys to the
     /// `TransformExecutor` pipeline. Gated on `AppFeatures.transformsEnabled`.
     private var transformsCoordinator: TransformsCoordinator?
+    private var voiceControlCoordinator: VoiceControlCoordinator?
     private var hasPresentedHotkeyUnavailableAlert = false
     private var hasPresentedHotkeyConflictAlert = false
     private var environmentSetupTask: Task<Void, Never>?
@@ -243,9 +244,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if isRecording {
                 self?.hotkeyCoordinator?.suspend()
                 self?.transformsCoordinator?.suspendHotkeys()
+                self?.voiceControlCoordinator?.suspendHotkey()
             } else {
                 self?.hotkeyCoordinator?.resume()
                 self?.transformsCoordinator?.resumeHotkeys()
+                self?.voiceControlCoordinator?.installHotkey()
             }
         },
         onQuit: { [weak self] in
@@ -418,6 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         meetingAutoStartCoordinator?.stop()
         meetingAutoStopCoordinator?.stop()
         transformsCoordinator?.stop()
+        voiceControlCoordinator?.shutdown()
         settingsObserverCoordinator.stopObserving()
         environmentSetupTask?.cancel()
         speechPreWarmTask?.cancel()
@@ -677,6 +681,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transforms.start()
         transformsCoordinator = transforms
 
+        if AppFeatures.isVoiceControlAvailable() {
+            let control = VoiceControlCoordinator(
+                sharedMicStream: env.sharedMicStream,
+                scheduler: env.sttScheduler,
+                adapter: VoiceControlBrowserMultiplexer(native: NativeVoiceControlAdapter(), browser: VoiceControlBrowserAdapter()),
+                rewrite: { [llmService = env.llmService] text, instruction in
+                    guard UserDefaults.standard.bool(forKey: "voiceControl.writingConsent.v1") else {
+                        throw VoiceControlWritingConsentRequired()
+                    }
+                    return try await llmService.transform(text: text, prompt: instruction)
+                },
+                onShortcutRecording: { [weak self] recording in
+                    if recording {
+                        self?.hotkeyCoordinator?.suspend()
+                        self?.transformsCoordinator?.suspendHotkeys()
+                    } else {
+                        self?.hotkeyCoordinator?.resume()
+                        self?.transformsCoordinator?.resumeHotkeys()
+                    }
+                },
+                isStartSuppressed: { [weak self] in self?.onboardingWindowController.isVisible ?? true },
+                conflictingHotkeys: { [weak self] in
+                    guard let self else { return [] }
+                    return [self.settingsViewModel.hotkeyTrigger, self.settingsViewModel.pushToTalkHotkeyTrigger,
+                            self.settingsViewModel.meetingHotkeyTrigger, self.settingsViewModel.fileTranscriptionHotkeyTrigger,
+                            self.settingsViewModel.youtubeTranscriptionHotkeyTrigger]
+                }
+            )
+            voiceControlCoordinator = control
+            menuBarCoordinator.onVoiceControl = { [weak control] in control?.show() }
+            control.installHotkey()
+        }
+
         menuBarCoordinator.refreshHotkeyTitle()
         menuBarCoordinator.refreshMeetingHotkeyShortcut()
         menuBarCoordinator.refreshTranscriptionHotkeyShortcuts()
@@ -820,6 +857,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarCoordinator.refreshHotkeyTitle()
         menuBarCoordinator.refreshMeetingHotkeyShortcut()
         transformsCoordinator?.reloadBindings()
+        voiceControlCoordinator?.installHotkey()
     }
 
     /// Any auxiliary hotkey change refreshes all three auxiliary hotkeys so a
@@ -848,6 +886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarCoordinator.refreshMeetingHotkeyShortcut()
         menuBarCoordinator.refreshTranscriptionHotkeyShortcuts()
         transformsCoordinator?.reloadBindings()
+        voiceControlCoordinator?.installHotkey()
     }
 
     private func transformReservedHotkeysForTransforms() -> [TransformShortcutReservedHotkey] {
@@ -871,6 +910,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reserved.append(
                 TransformShortcutReservedHotkey(
                     name: "meeting recording", trigger: settingsViewModel.meetingHotkeyTrigger))
+        }
+        if AppFeatures.isVoiceControlAvailable() {
+            reserved.append(TransformShortcutReservedHotkey(name: "Voice Control", trigger: VoiceControlCoordinator.configuredHoldTrigger))
         }
         return reserved.filter { !$0.trigger.isDisabled }
     }

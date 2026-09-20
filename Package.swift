@@ -119,11 +119,17 @@ let package = Package(
     products: [
         .executable(name: "MacParakeet", targets: ["MacParakeet"]),
         .executable(name: "macparakeet-cli", targets: ["CLI"]),
+        .executable(name: "macparakeet-browser-host", targets: ["VoiceControlBrowserHost"]),
         .library(name: "MacParakeetCore", targets: ["MacParakeetCore"]),
         .library(name: "MacParakeetViewModels", targets: ["MacParakeetViewModels"])
     ],
     dependencies: packageDependencies,
     targets: [
+        .executableTarget(
+            name: "VoiceControlBrowserHost",
+            dependencies: ["MacParakeetCore"],
+            path: "Sources/VoiceControlBrowserHost"
+        ),
         // Main GUI app
         .executableTarget(
             name: "MacParakeet",

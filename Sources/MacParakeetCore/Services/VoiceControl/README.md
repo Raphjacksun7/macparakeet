@@ -1,0 +1,25 @@
+# Voice Control core
+
+Voice Control consumes committed speech separately from dictation insertion. The app owns microphone UI, explicit cloud consent and credentials; adapters own observation and effects. `VoiceControlTurnRunner` coordinates bounded turns, and `JevDecisionClient` evaluates the current interface using pinned `jev-1.13.0`.
+
+## Contracts
+
+- `VoiceControlSnapshot.id` identifies one observation. Opaque target IDs are valid only for that observation; an adapter must revalidate context, target and required capabilities immediately before acting.
+- `ActionAuthority` is synchronously revocable. Check it before each effect/chunk; use `perform` for a synchronous final check plus event dispatch. Never hold it across awaited I/O. Do not call `revoke` from inside `perform`.
+- Adapter receipts distinguish verified effects, unknown outcomes and failures. Unknown outcomes stop automatic advancement. Never replay an uncertain effect automatically.
+- Model completion is explicitly described as inferred. The runner never equates Jev's `finished` choice with independent proof of all goal conditions. An incomplete observation cannot establish completion.
+- Unknown presses, keyboard effects, and explicitly flagged generated replacements require a confirmation tied to the original authority and snapshot. Stop invalidates that authority immediately. Confirmation expires after 20 seconds.
+- One task is bounded to 12 dispatched effects, 30 decisions and 60 seconds. Failed/unknown dispatched effects count. Resume and confirmation retain these limits; a new instruction starts a new task. Two consecutive semantically unchanged observations stop the loop.
+- Incoming committed instructions revoke the old task, wait for its in-flight effect to return, then run only the newest pending instruction. `clarify` preserves the original goal and verified history.
+
+## Jev boundary
+
+The client sends no audio, uses no chat-completion API, logs no requests, and never surfaces remote response bodies in errors. Consent is checked before a request and after its response. The bearer key is stored independently of other LLM credentials in Keychain.
+
+Choice responses must contain exactly the offered questions/options, normalized finite probabilities, a valid argmax and finite confidence. Confidence is a concentration signal, not a calibrated success probability. Target heads are operation-conditioned; text-span heads are target-conditioned. Entered text must be a literal source span of the command unless the separate command router explicitly obtains a generated rewrite.
+
+Requests that exceed 200 targets, 24 editable targets, an 8 KB instruction, 16 KB summary or 120 KB encoded request fail visibly rather than silently dropping controls. These are implementation bounds, not verified Jev service limits. Large or ambiguous interfaces may need the user to focus a narrower area. The model never produces executable code, selectors or arbitrary keyboard chords.
+
+## Verification
+
+`swift test --filter VoiceControlCoreTests` checks revocation, expired-by-Stop confirmation, unknown-effect non-replay, strict response validation, source-span preservation, no request without consent, and no response/key reflection on errors. These are fixture checks, not real microphone/browser qualification. See the research qualification record for runtime evidence.
