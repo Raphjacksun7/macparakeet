@@ -133,8 +133,10 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
         guard pool.count > 1, !pool.contains(where: \.isFocused) else { return nil }
         return pool.map {
             VoiceControlEnabledEvent(
-                id: $0.id, criteria: "\($0.role): \($0.label)",
-                action: ordinary(.press, $0.id, label: $0.label))
+                id: $0.id,
+                criteria: VoiceControlOutcomes.criteria(landing: $0.label),
+                action: ordinary(.press, $0.id, label: $0.label),
+                postcondition: .selectedLabel($0.label))
         }
     }
 

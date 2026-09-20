@@ -16,7 +16,7 @@ Observe (AX, or DOM if the tab is connected)
         → host policy → execute once → verify on a fresh snapshot
 ```
 
-Jev is a judge, not a worker and not a completion oracle. `finished` is never a receipt. Return is **not** an enabled key while a suggestion or date picker is open.
+Jev is a judge, not a worker and not a completion oracle. `finished` is never a receipt. Return is **not** an enabled key while a suggestion or date picker is open. Competing picker rows are **outcomes** (where the piece lands), not keystrokes. See [jev-outcome-choice.md](jev-outcome-choice.md).
 
 ## What we did not build
 
@@ -31,7 +31,7 @@ A seven-state universal Mac graph, Score-ranking of every widget, a generative w
 | `VoiceControlMachineFrame` | Named machine (`flights`), situation, events. |
 | `VoiceControlLegality` | Shared filters for domain machines **and** unconstrained Jev (no Search/Return on an overlay). |
 | `VoiceControlFlightPlan.frame` | Flights obligations → events. Unique → local. Competing cities → Jev. |
-| `JevDecisionClient.decide(..., events:)` | One `event` Choice plus `insufficient_evidence` / `clarify`. |
+| `JevDecisionClient.decide(..., events:)` | One `outcome` Choice plus `insufficient_evidence` / `clarify`. |
 
 Adapters, speech, traces, confirmation, and Stop are unchanged.
 
@@ -53,6 +53,6 @@ Repeated, labelable decisions. Unique steps stay local.
 
 ## Verification
 
-`swift test --filter VoiceControl` — **107 tests, 0 failures** (2026-09-20). Includes overlay Return exclusion, competing-city Jev events, unique Zürich local press, event-only Jev payload, unconstrained overlay omitting Return/Search, and `replace with X` no longer building an invalid string range.
+`swift test --filter VoiceControl` — **110 tests, 0 failures** (2026-09-20). Includes overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search, picker landings without a Flights parse, and `replace with X` no longer building an invalid string range.
 
 Live Flights-to-results and microphone qualification remain open. This architecture makes the recorded overlay stall **illegal** (Return is not enabled) instead of hoping Jev will not pick it.

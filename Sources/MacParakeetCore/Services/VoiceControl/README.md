@@ -14,7 +14,7 @@ Voice Control consumes committed speech separately from dictation insertion. The
 
 ## Jev boundary
 
-The client sends no audio, uses no chat-completion API, logs no requests, and never surfaces remote response bodies in errors. Consent is checked before a request and after its response. The bearer key is stored independently of other LLM credentials in Keychain. When the router supplies enabled events, the request is a single `event` Choice over those ids plus `insufficient_evidence` / `clarify`. Unconstrained requests omit Return while a suggestion or date picker is open.
+The client sends no audio, uses no chat-completion API, logs no requests, and never surfaces remote response bodies in errors. Consent is checked before a request and after its response. The bearer key is stored independently of other LLM credentials in Keychain. When the router supplies enabled events, the request is a single `outcome` Choice over those ids plus `insufficient_evidence` / `clarify`. Unconstrained requests omit Return while a suggestion or date picker is open.
 
 Choice responses must contain exactly the offered questions/options, normalized finite probabilities, a valid argmax and finite confidence. Confidence is a concentration signal, not a calibrated success probability. Target heads are operation-conditioned; text-span heads are target-conditioned. Entered text must be a literal source span of the command unless the separate command router explicitly obtains a generated rewrite.
 

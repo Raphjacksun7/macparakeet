@@ -25,8 +25,36 @@ public struct VoiceControlEnabledEvent: Equatable, Sendable, Identifiable {
     public let id: String
     public let criteria: String
     public let action: VoiceControlAction
-    public init(id: String, criteria: String, action: VoiceControlAction) {
-        self.id = id; self.criteria = criteria; self.action = action
+    public let postcondition: VoiceControlPostcondition
+    public init(
+        id: String, criteria: String, action: VoiceControlAction,
+        postcondition: VoiceControlPostcondition = .unknown
+    ) {
+        self.id = id; self.criteria = criteria; self.action = action; self.postcondition = postcondition
+    }
+}
+
+/// What must be true on the next snapshot if this landing succeeded.
+public enum VoiceControlPostcondition: Equatable, Sendable {
+    case selectedLabel(String)
+    case unknown
+
+    public func holds(in snapshot: VoiceControlSnapshot) -> Bool {
+        switch self {
+        case .unknown:
+            return false
+        case .selectedLabel(let label):
+            if snapshot.targets.contains(where: {
+                $0.isFocused && $0.label.localizedStandardCompare(label) == .orderedSame
+            }) {
+                return true
+            }
+            let short = label.split(separator: ",").first.map(String.init) ?? label
+            return snapshot.targets.contains {
+                ($0.value ?? "").localizedStandardContains(short)
+                    || $0.label.localizedStandardContains(short) && $0.isFocused
+            }
+        }
     }
 }
 
@@ -81,6 +109,46 @@ public enum VoiceControlLegality {
         let label = target.label.lowercased()
         return label.contains("where else") || label.contains("where to") || label.contains("where from")
             || label.contains("departure") || label.contains("dates")
+    }
+}
+
+/// Landings Jev may choose among. A landing is an observed outcome the host can
+/// compile to one AX action and check on the next snapshot.
+public enum VoiceControlOutcomes {
+    public static func criteria(landing label: String) -> String {
+        "After the host acts, \(label) is the selected result."
+    }
+
+    /// Ambiguous picker rows. Generic unlabeled links are not landings: their
+    /// post-state is unknown, so they stay unconstrained or domain-local.
+    public static func competingLandings(in snapshot: VoiceControlSnapshot, goal: String)
+        -> [VoiceControlEnabledEvent]?
+    {
+        let situation = VoiceControlSituation.classify(snapshot)
+        let rows: [VoiceControlTarget]
+        switch situation {
+        case .plain:
+            return nil
+        case .suggestionPicker:
+            rows = snapshot.targets.filter(VoiceControlLegality.isCitySuggestion)
+        case .datePicker:
+            rows = snapshot.targets.filter(VoiceControlLegality.isCalendarDay)
+        }
+        let unused = rows.filter { !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard Set(unused.map(\.id)).count == unused.count else { return nil }
+        let tokens = goal.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count >= 5 }
+        let preferred = unused.filter { row in
+            tokens.contains { token in row.label.localizedStandardContains(token) }
+        }
+        let pool = preferred.count > 1 ? preferred : unused
+        guard pool.count > 1 else { return nil }
+        return pool.map {
+            VoiceControlEnabledEvent(
+                id: $0.id, criteria: criteria(landing: $0.label),
+                action: VoiceControlAction(
+                    operation: .press, targetID: $0.id, targetLabel: $0.label, consequence: .ordinary),
+                postcondition: .selectedLabel($0.label))
+        }
     }
 }
 

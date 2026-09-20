@@ -195,6 +195,12 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
                     operation: .insertText, targetID: focused[0].id,
                     value: rewritten, targetLabel: focused[0].label, requiresConfirmation: true))
         }
+        if let landings = VoiceControlOutcomes.competingLandings(in: snapshot, goal: command),
+            landings.count > 1
+        {
+            return try await fallback.decide(
+                goal: command, snapshot: snapshot, history: history, events: landings)
+        }
         return try await fallback.decide(goal: command, snapshot: snapshot, history: history)
     }
     private static func isDirectCommand(_ lower: String) -> Bool {
