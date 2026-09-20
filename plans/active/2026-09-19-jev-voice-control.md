@@ -1,5 +1,18 @@
 # Jev-powered Voice Control for MacParakeet
 
+> **Governing implementation update — 2026-09-19:** The user's
+> [native Accessibility direction](../../docs/research/2026-09-19-jev-voice-control/native-accessibility-direction.md)
+> and [correction/recovery/observability direction](../../docs/research/2026-09-19-jev-voice-control/correction-recovery-observability-direction.md)
+> supersede conflicting proposals below. Native AX owns browser and app control;
+> no extension setup, registration or packaging is required. Retain the experimental
+> panel, BYO Jev key and spoken Transform integration. Ordinary authorized goal
+> steps run without repeated approval; actual payment/destructive/external
+> commitments remain deliberate boundaries. Contextual revisions preserve task
+> history, manual input pauses without discarding the goal, and local bounded
+> traces explain observed execution. Broader route proposals below are a research
+> envelope; current implementation/evidence is in the capability matrix.
+
+
 **Status:** RESEARCHED PROPOSAL — no implementation or release approval implied.  
 **Date:** 2026-09-19. **Owner:** MacParakeet product/core app.  
 **Origin:** User request for a full voice-control feature, deep source research, classifier/router mapping and excellent everyday UI/UX. Jev is the requested semantic decision engine.  

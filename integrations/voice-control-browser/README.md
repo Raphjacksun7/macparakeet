@@ -1,4 +1,12 @@
-# Voice Control browser adapter
+# Historical browser extension experiment — not part of MacParakeet
+
+**Retired on 2026-09-19.** Voice Control uses native macOS Accessibility, including the current browser. Users do not install an extension, register a native host, pair a tab, or restart their browser. This directory preserves an earlier experiment and its qualification evidence only.
+
+The Swift implementation and tests are archived in [historical-browser-extension](../../docs/research/2026-09-19-jev-voice-control/historical-browser-extension/README.md); its executable target and app packaging were removed. Do not follow the historical setup instructions below for the current product. Existing user browser installations and settings were left untouched.
+
+---
+
+# Original experimental notes
 
 This optional Chromium Manifest V3 extension connects an explicitly chosen tab to MacParakeet. Speech recognition and Jev credentials remain in the native app. The extension observes visible controls, executes typed operations, and returns effect receipts. It does not run model-generated JavaScript and does not use CDP.
 

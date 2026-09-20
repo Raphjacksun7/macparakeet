@@ -22,9 +22,8 @@ The provider's response selects typed capabilities and observed targets; it
 never grants authority or supplies executable code.
 
 A bounded runner retains goals across fresh observations. Separate generation
-is needed only for writing/reasoning that selection cannot supply. Native AX
-and an optional browser extension execute local effects with revalidation,
-action-bound confirmations, revocable authority and explicit outcomes. Goal
+is needed only for writing/reasoning that selection cannot supply. Native AX, including browser webpage controls, executes local effects with revalidation,
+consequence-based action-bound confirmations, revocable authority and explicit outcomes. Goal
 completion must be supported by observed evidence, not a model's optimism.
 
 Spoken rewrites reuse ADR-022's configured providers while preserving the
@@ -46,3 +45,18 @@ The capability and compatibility matrix must be qualified per app, browser,
 operation and speech engine. A development build and fixture tests do not imply
 stable release readiness. The feature remains explicitly enabled and subject to
 its evaluation gates. See the [implementation plan](../../plans/active/2026-09-19-jev-voice-control.md).
+
+## User direction amendment — 2026-09-19
+
+Browser control requires no extension, debugging port, special browser profile or
+restart. Prior extension integration remains archived research only. Ordinary
+reasonably implied steps of an explicit goal are authorized together; mechanical
+button/key operations are not alone a reason to ask permission. Payment and
+comparable consequential commitments remain deliberate boundaries. Clarification
+asks for genuinely missing intent, separately from consequence approval.
+
+Corrections amend the task without erasing actual effect receipts. Manual input
+pauses authority while preserving the goal; explicit continuation reobserves and
+respects manual edits. Useful live activity may contain task content; bounded
+operational traces are local and content-minimized, with no automatic upload or
+raw audio/screenshot recording. See the linked direction documents in the plan.

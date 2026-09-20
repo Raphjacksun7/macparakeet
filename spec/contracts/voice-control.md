@@ -6,7 +6,7 @@ release and device qualification remain separate from source/test evidence.
 ## Purpose
 
 Voice Control turns an explicitly supplied instruction into bounded interaction
-with the current native app or an explicitly authorized browser tab. Ordinary
+with the current app or existing browser through macOS Accessibility. Ordinary
 dictation must keep inserting speech as text. Enabling Voice Control does not
 change the meaning of the existing dictation shortcuts, processing pipeline,
 history, or cancellation behavior.
@@ -25,8 +25,8 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   delegates semantic decisions to `JevDecisionClient`.
 - `VoiceControlTurnRunner` binds decisions to observations, applies confirmation
   and budget policy, and consumes execution receipts.
-- `NativeVoiceControlAdapter` and the optional `VoiceControlBrowserMultiplexer`
-  observe controls and execute the supported typed operations.
+- `NativeVoiceControlAdapter` observes macOS Accessibility controls and executes
+  the supported typed operations in the current app, including existing browsers.
 - `GUIMutationArbiter` coordinates foreground effects with dictation, Transforms
   and menu/history paste.
 
@@ -60,21 +60,14 @@ permission immediately. Revoking cloud control stops the current session;
 forgetting the key also deletes the Keychain item. Neither operation disables
 ordinary local dictation. A request already sent to a provider cannot be recalled.
 
-Browser setup is available in the native setup panel: reveal the bundled extension,
-choose a supported Chromium browser, enter its extension ID, and register the
-bundled native host. Replacing another pairing requires the explicit replacement
-checkbox. Registration first ends/drains the active bridge and preserves foreign
-registrations. The extension still requires the browser's own unpacked-extension
-installation flow and explicit Connect this tab authorization. Start browser
-connection opens the local bridge without opening the microphone or acquiring GUI
-mutation ownership. An idle bridge may remain available across completed tasks;
-explicit End, disable, or shutdown closes it. `voiceControl.browserBridgeEnabled.v1`
-controls whether new sessions start that optional bridge. No personal browser is
-restarted with debugging flags.
+Browser control uses the same native Accessibility adapter. The shipping app has
+no extension installation, extension ID, host registration, pairing, debugging
+port or special browser profile requirement. It uses the browser/session already
+open. Historical extension experiments are not a supported product path. Existing
+browser data or settings must not be removed as part of this change.
 
 Audio stays on the Mac. Jev is text-only and receives no audio. Native observation
-excludes configured password-manager apps and recognized secret fields. The
-browser adapter excludes secret/payment fields using its own document rules.
+excludes configured password-manager apps and recognized secret fields.
 Jev request serialization omits the dedicated `selectedText` property; visible
 field values can still contain the same text under the general context consent.
 The writing toggle controls the separate writing-provider call, not whether any
@@ -115,13 +108,19 @@ in this path. Preview failure or dropped preview samples cannot authorize an
 operation or replace the recorded-file final result. Preview sessions drain before
 final STT admission so a live preview does not retain the interactive slot.
 
-AX/DOM observation is requested concurrently with microphone start. It must not
-delay capture behind a window traversal or browser connection. Rewrite context
+Accessibility observation is requested concurrently with microphone start. It must not
+delay capture behind a window traversal. Rewrite context
 is the invocation observation and must still match the current context, target
 and selection before generation/application. Observations are not promises that
 the user has finished speaking.
 
 ## Cancellation, corrections and ownership
+
+Queued typed instructions, confirmations and Continue requests carry revocable
+submission identity across snapshot preparation and runner actor hops. Stop,
+manual takeover, cancellation or a newer intent invalidates that identity; late
+preparation cannot renew execution authority. Cancel also revokes pending speech
+so a late final transcript cannot silently restart the cancelled task.
 
 Physical Stop/Escape and manual keyboard, mouse or scroll input outside the Voice
 Control panel revoke future effects. Marked synthetic insertion events and the
@@ -138,9 +137,9 @@ current utterance and requires silence before another utterance can begin.
 | Stop / pause | Revoke advancement and pending confirmations; keep an explicitly active hands-free microphone on. |
 | Cancel task | Discard the task. It does not implicitly end an active listening session. |
 | Stop listening | Revoke advancement and stop/discard microphone capture. |
-| End Voice Control | Revoke and drain the task, stop capture/bridge, clear active session state and release foreground ownership. |
-| Resume | Continue only when the runner has no unresolved unknown effect. |
-| Confirm | Consume a current, action-bound confirmation; never authorize an unrelated later action. |
+| End Voice Control | Revoke and drain the task, stop capture, clear active session state and release foreground ownership. |
+| Continue / resume | Observe the current state and remaining goal. Never blindly replay an unresolved unknown effect. |
+| Confirm / yes / okay | Consume a current, action-bound confirmation; never authorize an unrelated later action. |
 
 Starting speech while awaiting a clarification or confirmation preserves that
 pending response. It does not call Stop or take a new observation that would
@@ -151,10 +150,25 @@ The GUI arbiter admits one owner. Dictation holds its lease through asynchronous
 paste completion and its cancellation/Undo window; ordinary success-dwell restart
 semantics remain intact. Transforms retain ownership through cancellation cleanup
 and clipboard restoration. Voice Control retains ownership until the runner has
-drained. Completed/failed/cancelled mic-off tasks release ownership automatically
-while their result can remain visible. Paused tasks retain their resumable state;
-a competing dictation/history action surfaces a message explaining how to end
-Voice Control rather than silently appearing broken.
+drained. Completed/failed/cancelled and paused mic-off tasks release ownership
+automatically while their context and result remain visible. Continue, a correction,
+or a new command reacquires ownership before work. A retained paused task does not
+block ordinary dictation. An active listening session retains ownership; competing
+dictation/history actions explain that the microphone must be turned off or the
+session ended.
+
+Manual takeover preserves the task and pauses advancement. Continue uses a fresh
+observation after the user's edit. Correction phrases such as “Actually London”
+and “No, the other one” revise the current task rather than discard the original
+goal. Unrelated instructions start a new task; clarification answers retain their
+pending response. Ambiguous references require clarification. A replacement
+utterance that supersedes unfinished recognition is identified in task activity.
+
+The panel displays the original goal, current instruction, stopping reason and an
+expandable activity list bounded to 100 entries. Attempting an action is not a
+success receipt. Verified effects, observed transitions and unknown effects remain
+distinct. Activity is ephemeral and clears on End; no default audio, screenshot,
+full command or UI-text history is persisted or uploaded for diagnostics.
 
 ## Decisions, effects and completion
 
@@ -165,25 +179,41 @@ JavaScript, AppleScript, arbitrary selectors or shell commands.
 
 Snapshots carry observation identity, context identity, target descriptions and
 coverage. Execution checks freshness, current application/document context, target
-availability and revocable authority. Browser authorization is explicit; once a
-browser session is selected, losing it must not silently reroute an effect to a
-native application. Expired observations require a new decision.
+availability and revocable authority. Changing app/window context invalidates
+pending target authority. Expired observations require a new decision.
 
 Receipts distinguish a verified requested effect, an observed transition, an
-unknown result, and a failed result. A transition allows a new observation and
-decision but is not proof the user's whole goal succeeded. Unknown effects block
-blind replay and Resume. A verified direct command can report completion without
+unknown result, and a failed result. An ordinary transition allows a new observation
+and decision but is not proof the user's whole goal succeeded. A consequential
+action with only transition evidence pauses for manual verification and cannot
+be replayed automatically. An AX press error after dispatch is also uncertain. Unknown effects block
+blind replay, including through correction and Continue. A verified direct command can report completion without
 requiring exhaustive enumeration of the entire window. Semantic goal completion
 remains an inference and is labeled accordingly; incomplete observations cannot
 prove arbitrary goal completion.
 
-The runner limits each task to 12 dispatched actions, 30 decision requests,
-60 seconds and two repeated unchanged observations. Confirmation expires after
-20 seconds and remains bound to its exact action, snapshot and authority. Presses
-that are not adapter-proven navigation, generated replacements, and key actions
-require confirmation in the current conservative policy. Clarifying a target is
-not consequence authorization. Repeated actions against the same observed state
-are rejected to avoid unintended duplicate effects.
+The experimental runner limits each task to 40 dispatched actions, 100 decision
+requests, 180 seconds of active execution and repeated unchanged-state guards.
+Waiting for human clarification, correction or confirmation does not consume the
+active execution budget. Confirmation expires after 20 seconds and remains bound
+to its exact action, snapshot and authority.
+
+Confirmation is consequence-based. Ordinary navigation, selection, form edits,
+scrolling and search proceed within the requested task. Payment commitments,
+destructive actions and external commitments require confirmation; uncertain
+consequences ask rather than assume. Generated replacements remain previewed for
+confirmation. Clarifying a target is distinct from consequence authorization.
+Repeated actions against the same observed state are rejected to avoid duplicate
+effects; correcting a goal must not erase unknown-effect or execution history.
+
+The runner keeps bounded in-memory diagnostic records containing task/revision
+IDs, stage, operation, outcome, candidate counts and elapsed timing. These records
+exclude commands, field values, selected text, screenshots, audio, keys and remote
+error bodies. They are distinct from the ephemeral user-visible activity panel.
+The experimental panel exposes actual records in an expandable Diagnostics view
+with explicit Refresh and Copy diagnostics actions. Copy writes only these
+content-minimized records to the local clipboard; it does not save a file or
+upload anything. End clears the panel diagnostics.
 
 Supported exact local routes include literal text entry, unambiguous label
 selection, offered navigation keys, scrolling, advertised undo and precise
@@ -198,16 +228,15 @@ confirmation.
 
 This implementation does not promise arbitrary application support, pixel/OCR
 fallback, dragging, a universal reversible undo stack, custom workflow recording,
-a wake word, speaker authentication, or a Safari extension. Native accessibility
-coverage varies by application. Browser extension installation/pairing and browser
-version behavior require their own qualification. Model confidence is not calibrated
+a wake word, speaker authentication, or universal browser coverage. Native accessibility
+coverage varies by application and browser. Model confidence is not calibrated
 end-to-end task success. The upstream flight demo's timing is not a MacParakeet
 benchmark.
 
 Release qualification must independently demonstrate actual microphone capture,
-local STT, native/browser target coverage, stop races, speech confirmation,
+local STT, native Accessibility target coverage, stop races, speech confirmation,
 endpointer behavior, onboarding and signed-app permissions. Fake-adapter tests,
-text-only Jev probes and browser DOM fixtures do not constitute that full evidence.
+text-only Jev probes and historical browser DOM fixtures do not constitute that full evidence.
 The current evidence and remaining gaps belong in the implementation log/PR.
 
 ## Stable and non-stable fields
@@ -225,7 +254,7 @@ changes still need relevant behavioral tests and updated qualification evidence.
 
 Focused enforcement lives in `VoiceControlSpeechTests`, `VoiceControlCoreTests`,
 `DictationFlowCoordinatorTests`, and `TransformRunSerializerTests`, alongside the
-browser fixture checks and native qualification tools. Speech regressions include
+native qualification tools. Speech regressions include
 raw-final preservation, owned-file cleanup, late noncooperative STT after Stop,
 queued-event revocation, hands-free Finish not replaying prior commands, pending
 confirmation/clarification surviving listening presentation, literal payload

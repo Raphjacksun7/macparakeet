@@ -20,10 +20,10 @@ hands-free session from the menu. Speech uses the existing local microphone and
 STT scheduler; command audio and instructions do not enter dictation history.
 
 After separate cloud consent, Jev selects typed actions over current native
-Accessibility controls or an explicitly connected browser tab. The runner can
+Accessibility controls, including browser webpage content. The runner can
 retain a goal across changing controls, enter literal text, replace an exact
-phrase, scroll, activate an app, and request confirmation for consequential or
-uncertain effects. Selected-text rewrites use the configured writing provider
+phrase, scroll, activate an app, and request confirmation for consequential
+commitments. Selected-text rewrites use the configured writing provider
 with separate consent. Stop revokes queued actions; unknown outcomes pause and
 are not replayed. Model-inferred completion is labeled as such.
 

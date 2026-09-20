@@ -23,6 +23,8 @@ struct VoiceControlPanelView: View {
                         "Speech recognition stays on this Mac. Jev receives your command and a limited description of visible text and controls in the current app. Password fields are excluded. Cloud control is optional and separate from ordinary dictation."
                     )
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    Text("Controls your current app and browser through macOS Accessibility. Coverage depends on the app.")
+                        .font(.caption).foregroundStyle(.secondary)
                     SecureField("TypeSafe / Jev API key", text: $model.keyInput)
                         .textFieldStyle(.roundedBorder)
                     Toggle("Allow commands and app context to be sent to Jev", isOn: $model.consent)
@@ -39,7 +41,6 @@ struct VoiceControlPanelView: View {
                         defaultTrigger: VoiceControlCoordinator.holdTrigger,
                         additionalValidation: model.validateShortcut,
                         onRecordingStateChanged: model.onShortcutRecording)
-                    browserSetup
                     Button("Save and enable", action: { model.onSaveSetup?() })
                         .parakeetAction(.primaryProminent).disabled(!model.consent)
                     Button("Disable and forget API key", role: .destructive, action: { model.onDisable?() })
@@ -52,6 +53,9 @@ struct VoiceControlPanelView: View {
                         Text(model.partialTranscript).foregroundStyle(.secondary).lineLimit(3)
                             .accessibilityLabel("Speech preview: " + model.partialTranscript)
                     }
+                    if !model.goal.isEmpty {
+                        Text("Task: " + model.goal).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                    }
                     if !model.transcript.isEmpty {
                         Text(model.transcript).font(.body.weight(.medium)).lineLimit(4)
                     }
@@ -60,7 +64,7 @@ struct VoiceControlPanelView: View {
                     if model.microphoneOn {
                         ProgressView(value: Double(model.audioLevel)).accessibilityLabel("Microphone level")
                     }
-                    if model.phase == .confirmation {
+                    if model.conversation.expectedResponse == .confirmation {
                         HStack {
                             Button("Confirm this action", action: { model.onConfirm?() }).parakeetAction(
                                 .primaryProminent)
@@ -77,7 +81,7 @@ struct VoiceControlPanelView: View {
                         Button("Stop", action: { model.onStop?() }).parakeetAction(.secondary)
                             .keyboardShortcut(.cancelAction)
                         if model.phase == .paused {
-                            Button("Resume", action: { model.onResume?() }).parakeetAction(.secondary)
+                            Button("Continue", action: { model.onResume?() }).parakeetAction(.secondary)
                         }
                     }
                     HStack {
@@ -86,53 +90,48 @@ struct VoiceControlPanelView: View {
                         Button("Go", action: submit).parakeetAction(.secondary)
                             .disabled(model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
+                    if !model.steps.isEmpty {
+                        DisclosureGroup("Task activity", isExpanded: $model.activityExpanded) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(Array(model.steps.enumerated()), id: \.offset) { _, step in
+                                    Text(step).font(.caption).textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }.padding(.top, 8)
+                        }
+                    }
+                    DisclosureGroup("Diagnostics", isExpanded: $model.diagnosticsExpanded) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(model.diagnosticsStatus).font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Button("Refresh", action: { model.onRefreshDiagnostics?() }).parakeetAction(.subtle)
+                                Button("Copy diagnostics", action: { model.onCopyDiagnostics?() }).parakeetAction(.subtle)
+                                    .disabled(model.diagnosticsText.isEmpty)
+                            }
+                            if !model.diagnosticsText.isEmpty {
+                                ScrollView([.vertical, .horizontal]) {
+                                    Text(model.diagnosticsText).font(.system(.caption, design: .monospaced))
+                                        .textSelection(.enabled).padding(6)
+                                }.frame(maxHeight: 220)
+                            }
+                        }.padding(.top, 8)
+                    }
+                    .onChange(of: model.diagnosticsExpanded) { _, expanded in
+                        if expanded { model.onRefreshDiagnostics?() }
+                    }
                     HStack {
                         Text("Hold \(model.holdTrigger.shortSymbol) · Escape stops").font(.caption).foregroundStyle(
                             .secondary)
                         Spacer()
+                        Button("End", action: { model.onEnd?() }).parakeetAction(.subtle)
                         Button("Setup", action: { model.onSettings?() }).parakeetAction(.subtle)
                     }
                 }
             }
             .padding(20).frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: 470, height: model.needsSetup ? 650 : 380)
+        .frame(width: 470, height: model.needsSetup ? 510 : 470)
         .background(.regularMaterial)
-    }
-    private var browserSetup: some View {
-        GroupBox("Browser control (optional)") {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle("Use the browser extension for an authorized tab", isOn: $model.browserEnabled)
-                    .onChange(of: model.browserEnabled) { _, enabled in if !enabled { model.onBrowserDisabled?() } }
-                Text(
-                    "Open the extension folder, load it as an unpacked extension in your browser’s Extensions page, then copy its extension ID here."
-                )
-                .font(.caption).fixedSize(horizontal: false, vertical: true)
-                Button("Open extension folder", systemImage: "folder", action: { model.onOpenExtensionFolder?() })
-                    .parakeetAction(.secondary)
-                Picker("Browser", selection: $model.browserChoice) {
-                    ForEach(VoiceControlBrowserChoice.allCases) { browser in
-                        Text(browser.displayName).tag(browser)
-                    }
-                }
-                TextField("Extension ID", text: $model.browserExtensionID).textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
-                Toggle("Replace an existing browser pairing", isOn: $model.replaceBrowserPairing).font(.caption)
-                Button(
-                    model.isRegisteringBrowser ? "Registering…" : "Connect this extension",
-                    action: { model.onRegisterBrowser?() }
-                )
-                .parakeetAction(.secondary)
-                .disabled(model.isRegisteringBrowser || model.browserExtensionID.isEmpty)
-                Button(
-                    model.isConnectingBrowser ? "Starting connection…" : "Start browser connection",
-                    action: { model.onConnectBrowser?() }
-                )
-                .parakeetAction(.secondary).disabled(model.isConnectingBrowser || model.isRegisteringBrowser)
-                Text(model.browserSetupStatus).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }.padding(6)
-        }
     }
     private func submit() {
         let value = model.input
@@ -162,7 +161,7 @@ final class VoiceControlPanelController {
         panel.contentView = NSHostingView(rootView: VoiceControlPanelView(model: model))
     }
     func show() {
-        panel.setContentSize(NSSize(width: 470, height: model.needsSetup ? 650 : 380))
+        panel.setContentSize(NSSize(width: 470, height: model.needsSetup ? 510 : 470))
         if !panel.isVisible, let screen = NSScreen.main {
             let frame = screen.visibleFrame
             panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - 490, y: frame.maxY - 32))

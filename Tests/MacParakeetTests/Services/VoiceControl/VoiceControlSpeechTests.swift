@@ -216,3 +216,79 @@ extension VoiceControlSpeechTests {
         XCTAssertFalse(fence.accepts(queuedUtterance))
     }
 }
+
+
+extension VoiceControlSpeechTests {
+    func testContextualCorrectionPhrasesDoNotTreatUnrelatedGoalsAsRevisions() {
+        for phrase in ["Actually London", "No, the other one", "Change that to tomorrow", "Undo that"] {
+            XCTAssertTrue(VoiceControlConversationState.isCorrection(phrase))
+        }
+        XCTAssertFalse(VoiceControlConversationState.isCorrection("Find flights to London"))
+        XCTAssertFalse(VoiceControlConversationState.isCorrection("Type hello"))
+    }
+
+    @MainActor func testActivityPreservesPendingConfirmationAndDoesNotClaimAttemptsSucceeded() {
+        let model = VoiceControlViewModel()
+        model.apply(.confirmation(VoiceControlAction(operation: .press, targetID: "send"), "Send?"))
+        model.apply(.activity("Unknown effect: check the current app before continuing."))
+        XCTAssertEqual(model.phase, .confirmation)
+        XCTAssertTrue(model.conversation.takeConfirmation())
+        XCTAssertEqual(model.steps.last, "Unknown effect: check the current app before continuing.")
+        for _ in 0..<110 { model.appendActivity("Observed transition") }
+        XCTAssertEqual(model.steps.count, 100)
+    }
+}
+
+
+extension VoiceControlSpeechTests {
+    @MainActor func testStoppedTypedSubmissionCannotResumeAfterSnapshotCompletes() async {
+        let submissions = VoiceControlSubmissionState()
+        let token = submissions.begin()
+        let snapshot = AsyncStream<Void>.makeStream()
+        let preparation = Task { @MainActor in
+            for await _ in snapshot.stream { break }
+            return submissions.accepts(token)
+        }
+        submissions.invalidate()
+        snapshot.continuation.yield(())
+        snapshot.continuation.finish()
+        let admitted = await preparation.value
+        XCTAssertFalse(admitted)
+        XCTAssertFalse(token.isValid, "The runner actor receives the same revoked authority")
+    }
+
+    @MainActor func testNewIntentSupersedesQueuedResumeOrCancellation() {
+        let submissions = VoiceControlSubmissionState()
+        let queued = submissions.begin()
+        let newer = submissions.begin()
+        XCTAssertFalse(submissions.accepts(queued))
+        XCTAssertFalse(queued.isValid)
+        XCTAssertTrue(submissions.accepts(newer))
+    }
+
+    @MainActor func testConfirmationKeepsBoundAuthorityUntilExplicitRevocation() {
+        let submissions = VoiceControlSubmissionState()
+        let pending = submissions.begin()
+        XCTAssertTrue(submissions.currentOrBegin() === pending)
+        XCTAssertTrue(pending.isValid)
+        submissions.invalidate()
+        XCTAssertFalse(pending.isValid)
+        XCTAssertFalse(submissions.accepts(pending))
+        XCTAssertFalse(submissions.currentOrBegin() === pending)
+    }
+}
+
+
+extension VoiceControlSpeechTests {
+    @MainActor func testCancelledTaskClearsGoalAndActivityBeforeLaterCorrection() {
+        let model = VoiceControlViewModel()
+        model.goal = "Find flights from Zurich to Paris"
+        model.appendActivity("Verified: selected Paris")
+        model.apply(.clarification("Which departure date?"))
+        model.apply(.cancelled)
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertTrue(model.goal.isEmpty, "A later correction cannot attach to the cancelled goal")
+        XCTAssertTrue(model.steps.isEmpty)
+        XCTAssertNil(model.conversation.expectedResponse)
+    }
+}

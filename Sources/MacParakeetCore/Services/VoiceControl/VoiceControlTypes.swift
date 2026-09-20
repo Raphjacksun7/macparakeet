@@ -10,19 +10,20 @@ public struct VoiceControlTarget: Codable, Sendable, Equatable, Identifiable {
     public let role: String
     public let value: String?
     public let operations: Set<VoiceControlOperation>
-    /// Only adapter-proven navigation may dispatch a press without confirmation.
+    /// Adapter-proven navigation is one input to consequence-based confirmation.
     public let isNavigation: Bool
     public let isFocused: Bool
     public let selectedText: String?
     public let valueIsComplete: Bool
+    public let consequence: VoiceControlConsequence?
     public init(
         id: String, label: String, role: String, value: String? = nil,
         operations: Set<VoiceControlOperation>, isNavigation: Bool = false,
-        isFocused: Bool = false, selectedText: String? = nil, valueIsComplete: Bool = true
+        isFocused: Bool = false, selectedText: String? = nil, valueIsComplete: Bool = true, consequence: VoiceControlConsequence? = nil
     ) {
         self.id = id; self.label = label; self.role = role; self.value = value
         self.operations = operations; self.isNavigation = isNavigation
-        self.isFocused = isFocused; self.selectedText = selectedText; self.valueIsComplete = valueIsComplete
+        self.isFocused = isFocused; self.selectedText = selectedText; self.valueIsComplete = valueIsComplete; self.consequence = consequence
     }
 }
 
@@ -51,12 +52,15 @@ public struct VoiceControlAction: Codable, Sendable, Equatable {
     public let requiresConfirmation: Bool
     /// Populated only in executed history; a transition is not verified goal success.
     public let receiptStatus: VoiceControlReceipt.Status?
+    public let consequence: VoiceControlConsequence?
+    public let modelID: String?
+    public let decisionConfidence: Double?
     public init(
         operation: VoiceControlOperation, targetID: String, value: String? = nil, targetLabel: String? = nil,
-        requiresConfirmation: Bool = false, receiptStatus: VoiceControlReceipt.Status? = nil
+        requiresConfirmation: Bool = false, receiptStatus: VoiceControlReceipt.Status? = nil, consequence: VoiceControlConsequence? = nil, modelID: String? = nil, decisionConfidence: Double? = nil
     ) {
         self.operation = operation; self.targetID = targetID; self.value = value; self.targetLabel = targetLabel;
-        self.requiresConfirmation = requiresConfirmation; self.receiptStatus = receiptStatus
+        self.requiresConfirmation = requiresConfirmation; self.receiptStatus = receiptStatus; self.consequence = consequence; self.modelID = modelID; self.decisionConfidence = decisionConfidence
     }
 }
 
@@ -116,4 +120,6 @@ public enum VoiceControlEvent: Sendable, Equatable {
     case completed(String)
     case failed(String)
     case cancelled
+    /// Ephemeral task content for the panel, deliberately excluded from diagnostic traces.
+    case activity(String)
 }

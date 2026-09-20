@@ -222,27 +222,10 @@ copy_cli_binary() {
   echo "Bundled CLI: $MACOS_DIR/macparakeet-cli"
 }
 
-copy_browser_helper() {
-  build_swiftpm_helper macparakeet-browser-host
-  local browser_bin_dir
-  browser_bin_dir="$(swiftpm_release_bin_dir macparakeet-browser-host)"
-  local browser_bin_path="$browser_bin_dir/macparakeet-browser-host"
-  if [[ ! -x "$browser_bin_path" ]]; then
-    echo "Failed to locate browser host Release binary at: $browser_bin_path" >&2
-    exit 1
-  fi
-  cp "$browser_bin_path" "$MACOS_DIR/macparakeet-browser-host"
-  chmod +x "$MACOS_DIR/macparakeet-browser-host"
-  mkdir -p "$RESOURCES_DIR/VoiceControlBrowser"
-  rsync -a --delete "$ROOT_DIR/integrations/voice-control-browser/extension/" "$RESOURCES_DIR/VoiceControlBrowser/"
-  echo "Bundled Voice Control browser helper and extension"
-}
-
 build_xcodebuild
 echo "[2/4] Assembling app bundle…"
 
 copy_cli_binary
-copy_browser_helper
 
 # Bundle FFmpeg (required at runtime for media demux/conversion).
 #

@@ -16,6 +16,7 @@ final class VoiceControlCoordinator {
     private let speech: VoiceControlSpeechSession
     private let adapter: any VoiceControlAdapter
     private var literalMode = false
+    private let submissions = VoiceControlSubmissionState()
     private let rewrite: VoiceControlCommandRouter.Rewrite?
     private let credentials = VoiceControlCredentialStore()
     private let consent = VoiceControlConsentStore()
@@ -30,8 +31,7 @@ final class VoiceControlCoordinator {
     private var execution: Task<Void, Never>?
     private var capture: Task<Void, Never>?
     private var cleanup: Task<Void, Never>?
-    private var adapterStartup: Task<Void, Error>?
-    private var browserConnectionGeneration = 0
+    private var admissionRelease: Task<Void, Never>?
     private var invocationSnapshot: VoiceControlSnapshot?
     private var speechSubmission = false
     private var currentCaptureID: UUID?
@@ -62,26 +62,6 @@ final class VoiceControlCoordinator {
         self.onShortcutChanged = onShortcutChanged
         model.consent = consent.hasConsent
         model.writingConsent = UserDefaults.standard.bool(forKey: "voiceControl.writingConsent.v1")
-        model.browserEnabled = UserDefaults.standard.bool(forKey: "voiceControl.browserBridgeEnabled.v1")
-        model.browserExtensionID = UserDefaults.standard.string(forKey: "voiceControl.browserExtensionID") ?? ""
-        model.browserChoice =
-            VoiceControlBrowserChoice(
-                rawValue: UserDefaults.standard.string(forKey: "voiceControl.browserChoice") ?? "chrome") ?? .chrome
-        model.onOpenExtensionFolder = { [weak self] in
-            guard let url = VoiceControlBrowserRegistration.bundledExtensionURL() else {
-                self?.model.browserSetupStatus =
-                    "This build does not include the browser extension. Use a packaged dev build."
-                return
-            }
-            NSWorkspace.shared.open(url)
-        }
-        model.onRegisterBrowser = { [weak self] in self?.registerBrowser() }
-        model.onConnectBrowser = { [weak self] in self?.connectBrowser() }
-        model.onBrowserDisabled = { [weak self] in
-            UserDefaults.standard.set(false, forKey: "voiceControl.browserBridgeEnabled.v1")
-            self?.end(hide: false)
-            self?.model.browserSetupStatus = "Browser control is off. Native app controls remain available."
-        }
         model.holdTrigger = Self.configuredHoldTrigger
         model.validateShortcut = { [weak self] trigger in
             if self?.conflictingHotkeys().contains(where: { trigger.conflicts(with: $0) }) == true {
@@ -101,6 +81,8 @@ final class VoiceControlCoordinator {
         model.onStopListening = { [weak self] in self?.stopListening() }
         model.onCancel = { [weak self] in self?.cancelTask() }
         model.onEnd = { [weak self] in self?.end() }
+        model.onRefreshDiagnostics = { [weak self] in self?.refreshDiagnostics() }
+        model.onCopyDiagnostics = { [weak self] in self?.refreshDiagnostics(copy: true) }
         model.onConfirm = { [weak self] in self?.confirm() }
         model.onResume = { [weak self] in self?.resume() }
         model.onSubmit = { [weak self] in self?.submit($0) }
@@ -181,15 +163,31 @@ final class VoiceControlCoordinator {
         }
     }
     private func handleExternalInput(key: UInt16?, flags: UInt, marked: Bool) {
-        guard interactionLease != nil, !marked else { return }
+        guard !marked else { return }
         if let key,
             Self.isVoiceShortcutKey(
                 key, flags: NSEvent.ModifierFlags(rawValue: flags), trigger: Self.configuredHoldTrigger)
         {
             return
         }
-        stop()
-        model.message = "Paused because you used the keyboard or mouse. Give a new instruction when ready."
+        if interactionLease == nil {
+            if model.phase == .paused, let runner {
+                submissions.invalidate()
+                runner.pauseForManualInput()
+            }
+            return
+        }
+        submissions.invalidate()
+        runner?.pauseForManualInput()
+        speech.revokePendingTranscripts()
+        currentUtteranceID = nil
+        model.conversation.cancel()
+        model.partialTranscript = ""
+        Task { [speech] in await speech.discardPendingUtterance() }
+        model.phase = .paused
+        model.message = "You have control. Make your correction, then choose Continue."
+        model.appendActivity(model.message)
+        releaseFinishedSessionIfMicOff()
     }
     static func isVoiceShortcutKey(_ key: UInt16, flags: NSEvent.ModifierFlags, trigger: HotkeyTrigger) -> Bool {
         guard key == trigger.keyCode else { return false }
@@ -232,7 +230,6 @@ final class VoiceControlCoordinator {
             }
             consent.hasConsent = true
             UserDefaults.standard.set(model.writingConsent, forKey: "voiceControl.writingConsent.v1")
-            UserDefaults.standard.set(model.browserEnabled, forKey: "voiceControl.browserBridgeEnabled.v1")
             UserDefaults.standard.set(try JSONEncoder().encode(model.holdTrigger), forKey: "voiceControl.holdShortcut")
             model.keyInput = ""
             model.needsSetup = false
@@ -243,80 +240,11 @@ final class VoiceControlCoordinator {
         } catch { model.message = "Could not save the API key to Keychain." }
     }
 
-    private func registerBrowser() {
-        guard !model.isRegisteringBrowser else { return }
-        guard let hostURL = VoiceControlBrowserRegistration.bundledHostURL() else {
-            model.browserSetupStatus = "This build does not include the native browser host. Use a packaged dev build."
-            return
-        }
-        let extensionID = model.browserExtensionID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let browserChoice = model.browserChoice
-        let replace = model.replaceBrowserPairing
-        end(hide: false)
-        let pendingCleanup = cleanup
-        model.isRegisteringBrowser = true
-        model.browserSetupStatus = "Registering the selected browser extension…"
-        Task { [weak self] in
-            await pendingCleanup?.value
-            do {
-                try await VoiceControlBrowserRegistration().register(
-                    extensionID: extensionID, browser: browserChoice,
-                    hostURL: hostURL, replaceExisting: replace)
-                guard let self else { return }
-                UserDefaults.standard.set(extensionID, forKey: "voiceControl.browserExtensionID")
-                UserDefaults.standard.set(browserChoice.rawValue, forKey: "voiceControl.browserChoice")
-                UserDefaults.standard.set(true, forKey: "voiceControl.browserBridgeEnabled.v1")
-                self.model.browserEnabled = true
-                self.model.replaceBrowserPairing = false
-                self.model.browserSetupStatus =
-                    "Registered for \(browserChoice.displayName). Starting the browser connection…"
-                self.connectBrowser()
-            } catch {
-                self?.model.browserSetupStatus = error.localizedDescription
-            }
-            self?.model.isRegisteringBrowser = false
-        }
-    }
-
-    private func connectBrowser() {
-        guard !model.isConnectingBrowser, let browser = adapter as? VoiceControlBrowserMultiplexer else { return }
-        let pairing = VoiceControlBrowserWire.directory.appendingPathComponent("pairing.json")
-        guard FileManager.default.fileExists(atPath: pairing.path) else {
-            model.browserSetupStatus = "Register the extension ID first."
-            return
-        }
-        model.isConnectingBrowser = true
-        model.browserEnabled = true
-        UserDefaults.standard.set(true, forKey: "voiceControl.browserBridgeEnabled.v1")
-        browserConnectionGeneration += 1
-        let generation = browserConnectionGeneration
-        let pendingCleanup = cleanup
-        let connection = Task<Void, Error> { [weak self] in
-            await pendingCleanup?.value
-            guard let self, self.browserConnectionGeneration == generation else { throw CancellationError() }
-            try await browser.startBrowserIfPaired()
-            guard self.browserConnectionGeneration == generation else {
-                await browser.stop()
-                throw CancellationError()
-            }
-        }
-        adapterStartup = connection
-        Task { [weak self] in
-            do {
-                try await connection.value
-                guard let self, self.browserConnectionGeneration == generation else { return }
-                self.model.browserSetupStatus =
-                    "Ready for a tab. Click the extension icon in your browser and choose Connect this tab. The microphone stays off."
-            } catch {
-                guard let self, self.browserConnectionGeneration == generation else { return }
-                self.model.browserSetupStatus = error.localizedDescription
-            }
-            self?.model.isConnectingBrowser = false
-        }
-    }
-
     private func ensureSession() -> Bool {
-        guard cleanup == nil, !isStartSuppressed() else { return false }
+        guard cleanup == nil, admissionRelease == nil, !isStartSuppressed() else {
+            model.message = "Finishing the previous action. Try again in a moment."
+            return false
+        }
         if interactionLease != nil { return true }
         guard consent.hasConsent, let key = try? credentials.loadAPIKey(), !key.isEmpty else {
             model.needsSetup = true; show(); return false
@@ -325,6 +253,7 @@ final class VoiceControlCoordinator {
             model.message = "Finish the current dictation or Transform first."; show(); return false
         }
         interactionLease = lease
+        if runner != nil { show(); return true }
         acceptingEvents = true
         sessionGeneration += 1
         let engine = JevDecisionClient(
@@ -332,11 +261,6 @@ final class VoiceControlCoordinator {
             consent: {
                 UserDefaults.standard.bool(forKey: "voiceControl.cloudContextConsent.v1")
             })
-        if UserDefaults.standard.bool(forKey: "voiceControl.browserBridgeEnabled.v1"),
-            let browser = adapter as? VoiceControlBrowserMultiplexer
-        {
-            adapterStartup = Task { try await browser.startBrowserIfPaired() }
-        }
         let router = VoiceControlCommandRouter(
             fallback: engine, rewrite: rewrite,
             selectionAtInvocation: { [weak self] in
@@ -350,7 +274,7 @@ final class VoiceControlCoordinator {
                 guard !Task.isCancelled, let self, self.acceptingEvents else { return }
                 self.model.apply(event)
                 switch event {
-                case .completed, .failed, .cancelled: self.releaseFinishedSessionIfMicOff()
+                case .completed, .failed, .cancelled, .paused: self.releaseFinishedSessionIfMicOff()
                 default: break
                 }
             }
@@ -361,7 +285,7 @@ final class VoiceControlCoordinator {
 
     private func beginCapture(handsFree: Bool) {
         guard ensureSession(), !wantsCapture else { return }
-        if model.conversation.shouldPauseForSpeech { runner?.stop() }
+        if model.conversation.shouldPauseForSpeech { submissions.invalidate(); runner?.stop() }
         wantsCapture = true
         self.handsFree = handsFree
         let generation = sessionGeneration
@@ -375,9 +299,7 @@ final class VoiceControlCoordinator {
             ? "Listening. Pause after an instruction. Say ‘stop listening’ to turn the mic off."
             : "Listening. Release the shortcut to act."
         if model.conversation.shouldPauseForSpeech {
-            let startup = adapterStartup
             invocationSnapshotTask = Task { [adapter] in
-                _ = try? await startup?.value
                 return try? await adapter.observe()
             }
         }
@@ -415,8 +337,11 @@ final class VoiceControlCoordinator {
             if wantsCapture { model.phase = .listening }
         case .speechBegan(let capture, let utterance):
             guard currentCaptureID == capture, wantsCapture, speech.isCurrentUtterance(utterance) else { return }
+            if model.phase == .transcribing {
+                model.appendActivity("The previous speech recognition was superseded by your new instruction.")
+            }
             currentUtteranceID = utterance
-            if model.conversation.shouldPauseForSpeech { runner?.stop() }
+            if model.conversation.shouldPauseForSpeech { submissions.invalidate(); runner?.stop() }
             model.phase = .listening; model.message = "Listening to your next instruction…"
             if model.conversation.shouldPauseForSpeech {
                 invocationSnapshotTask?.cancel()
@@ -431,7 +356,9 @@ final class VoiceControlCoordinator {
             // Revoking is safe on a partial. No effect or resume is authorized here.
             let control = text.lowercased().trimmingCharacters(
                 in: .whitespacesAndNewlines.union(.punctuationCharacters))
-            if ["stop", "stop listening", "cancel", "command stop"].contains(control) { runner?.stop() }
+            if ["stop", "stop listening", "cancel", "command stop"].contains(control) {
+                submissions.invalidate(); runner?.stop()
+            }
         case .transcribing(let capture, let utterance):
             guard currentCaptureID == capture, currentUtteranceID == utterance, speech.isCurrentUtterance(utterance)
             else { return }
@@ -451,6 +378,7 @@ final class VoiceControlCoordinator {
         case .failed(let message, let capture):
             guard currentCaptureID == capture else { return }
             model.phase = .failed; model.message = message
+            releaseFinishedSessionIfMicOff()
         }
     }
     private func submit(_ text: String) {
@@ -467,6 +395,9 @@ final class VoiceControlCoordinator {
             dispatch(Self.literalInstruction(text))
             return
         }
+        if ["yes", "okay", "ok"].contains(command), model.conversation.expectedResponse == .confirmation {
+            confirm(); return
+        }
         switch command {
         case "literal mode", "dictation mode":
             literalMode = true; model.literalMode = true
@@ -476,7 +407,7 @@ final class VoiceControlCoordinator {
         case "cancel", "cancel task": cancelTask(); return
         case "stop listening": stopListening(); return
         case "end voice control": end(); return
-        case "resume": resume(); return
+        case "resume", "continue", "continue task": resume(); return
         case "confirm", "confirm this action": confirm(); return
         default: break
         }
@@ -487,18 +418,36 @@ final class VoiceControlCoordinator {
     }
     func explainInteractionBusy() {
         model.message =
-            "Voice Control still owns this task. End Voice Control to start dictation or paste from history."
+            "Turn the Voice Control microphone off or choose End to start dictation or paste from history."
         show()
     }
     private func releaseFinishedSessionIfMicOff() {
-        guard !wantsCapture, !model.microphoneOn else { return }
+        guard !wantsCapture, !model.microphoneOn, admissionRelease == nil,
+            let lease = interactionLease, let runner else { return }
         switch model.phase {
-        case .done, .failed, .idle: end(hide: false, preservePresentation: true)
-        default: break
+        case .done, .failed, .idle, .paused: break
+        default: return
+        }
+        let priorExecution = execution
+        admissionRelease = Task { [weak self] in
+            await priorExecution?.value
+            await runner.waitForIdle()
+            guard let self else { return }
+            GUIMutationArbiter.shared.release(lease)
+            if self.interactionLease == lease { self.interactionLease = nil }
+            self.admissionRelease = nil
         }
     }
     private func dispatch(_ text: String) {
-        model.transcript = text; model.steps = []
+        let submission = submissions.begin()
+        let correction = !model.goal.isEmpty && VoiceControlConversationState.isCorrection(text)
+        if !correction && model.conversation.expectedResponse != .clarification {
+            model.goal = text; model.steps = []
+        }
+        model.transcript = text
+        if !correction {
+            model.appendActivity((model.conversation.expectedResponse == .clarification ? "Clarification: " : "Request: ") + text)
+        }
         runner?.stop()
         guard let runner else { return }
         let clarification = model.conversation.takeClarification()
@@ -507,26 +456,21 @@ final class VoiceControlCoordinator {
         let speechUtterance = currentUtteranceID
         let generation = sessionGeneration
         execution = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.adapterStartup?.value
-                if needsSnapshot {
-                    self.invocationSnapshot = try? await self.adapter.observe()
-                } else if let snapshotTask {
-                    self.invocationSnapshot = await snapshotTask.value
-                }
-                if !needsSnapshot, self.currentUtteranceID != speechUtterance { return }
-                guard self.sessionGeneration == generation, self.acceptingEvents else { return }
-                if clarification { await runner.clarify(text) } else { await runner.submit(text) }
-            } catch {
-                guard self.sessionGeneration == generation else { return }
-                self.model.phase = .failed;
-                self.model.message = "Could not connect to the authorized browser. Check its extension."
-                self.releaseFinishedSessionIfMicOff()
+            guard let self, self.submissions.accepts(submission) else { return }
+            if needsSnapshot {
+                self.invocationSnapshot = try? await self.adapter.observe()
+            } else if let snapshotTask {
+                self.invocationSnapshot = await snapshotTask.value
             }
+            if !needsSnapshot, self.currentUtteranceID != speechUtterance { return }
+            guard self.sessionGeneration == generation, self.acceptingEvents, self.submissions.accepts(submission) else { return }
+            if clarification { await runner.clarify(text, submissionAuthority: submission) }
+            else if correction { await runner.revise(text, submissionAuthority: submission) }
+            else { await runner.submit(text, submissionAuthority: submission) }
         }
     }
     private func stop() {
+        submissions.invalidate()
         guard interactionLease != nil else { return }
         runner?.stop()
         speech.revokePendingTranscripts()
@@ -534,7 +478,8 @@ final class VoiceControlCoordinator {
         model.conversation.cancel()
         model.partialTranscript = ""
         Task { [speech] in await speech.discardPendingUtterance() }
-        model.phase = .paused; model.message = "Stopped. Check the app before resuming."
+        model.phase = .paused; model.message = "Stopped. Check the app, then choose Continue."
+        releaseFinishedSessionIfMicOff()
     }
     private func stopListening() {
         stop()
@@ -546,56 +491,100 @@ final class VoiceControlCoordinator {
             await speech.cancel()
             await prior?.value
         }
+        releaseFinishedSessionIfMicOff()
     }
     private func cancelTask() {
+        submissions.invalidate()
+        speech.revokePendingTranscripts()
+        currentUtteranceID = nil
+        model.partialTranscript = ""
+        Task { [speech] in await speech.discardPendingUtterance() }
         runner?.stop()
         model.conversation.cancel()
-        if let runner { execution = Task { await runner.cancel() } }
+        let submission = submissions.begin()
+        if let runner {
+            execution = Task { [weak self] in
+                guard self?.submissions.accepts(submission) == true else { return }
+                await runner.cancel(submissionAuthority: submission)
+            }
+        }
     }
     private func confirm() {
-        guard let runner, model.conversation.takeConfirmation() else { return }
-        execution = Task { await runner.confirm() }
+        guard ensureSession(), let runner, model.conversation.takeConfirmation() else { return }
+        let submission = submissions.currentOrBegin()
+        execution = Task { [weak self] in
+            guard self?.submissions.accepts(submission) == true else { return }
+            await runner.confirm(submissionAuthority: submission)
+        }
     }
     private func resume() {
         guard ensureSession(), let runner else { return }
-        execution = Task { await runner.resume() }
-    }
-    private func end(hide: Bool = true, preservePresentation: Bool = false) {
-        guard cleanup == nil else { return }
-        if !preservePresentation {
-            browserConnectionGeneration += 1
-            model.isConnectingBrowser = false
+        let submission = submissions.begin()
+        execution = Task { [weak self] in
+            guard self?.submissions.accepts(submission) == true else { return }
+            await runner.continueTask(submissionAuthority: submission)
         }
+    }
+    private func refreshDiagnostics(copy: Bool = false) {
+        guard let runner else {
+            model.diagnosticsText = ""
+            model.diagnosticsStatus = "No active or recent task diagnostics."
+            return
+        }
+        let generation = sessionGeneration
+        Task { [weak self] in
+            let records = await runner.traceSnapshot()
+            guard let self, self.sessionGeneration == generation, self.runner === runner else { return }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            guard let data = try? encoder.encode(records), let text = String(data: data, encoding: .utf8) else {
+                self.model.diagnosticsStatus = "Could not format diagnostics."
+                return
+            }
+            self.model.diagnosticsText = records.isEmpty ? "" : text
+            self.model.diagnosticsStatus = "\(records.count) in-memory records. Commands and app text are excluded."
+            if copy, !records.isEmpty {
+                NSPasteboard.general.clearContents()
+                if NSPasteboard.general.setString(text, forType: .string) {
+                    self.model.diagnosticsStatus = "Copied diagnostics to the clipboard. Nothing was uploaded."
+                }
+            }
+        }
+    }
+
+    private func end(hide: Bool = true, preservePresentation: Bool = false) {
+        submissions.invalidate()
+        guard cleanup == nil else { return }
         runner?.stop()
         speech.revokePendingTranscripts()
         acceptingEvents = false; wantsCapture = false; sessionGeneration += 1
+        model.diagnosticsText = ""
+        model.diagnosticsStatus = "Task ended. Diagnostics cleared."
         currentCaptureID = nil; currentUtteranceID = nil
         invocationSnapshotTask?.cancel(); invocationSnapshotTask = nil
         if !preservePresentation { literalMode = false; model.literalMode = false }
         model.microphoneOn = false
         hotkey?.resetToIdle()
         if hide { panel?.hide() }
+        let priorAdmissionRelease = admissionRelease
         let priorCapture = capture
         let priorExecution = execution
         let currentRunner = runner
-        let startup = adapterStartup
-        let browser = adapter as? VoiceControlBrowserMultiplexer
         let lease = interactionLease
         runnerEvents?.cancel()
         cleanup = Task { [weak self, speech] in
             await speech.cancel()
+            await priorAdmissionRelease?.value
             await priorCapture?.value
             await priorExecution?.value
             await currentRunner?.cancelAndDrain()
-            _ = try? await startup?.value
-            if !preservePresentation { await browser?.stop() }
             guard let self else { return }
             if let lease { GUIMutationArbiter.shared.release(lease) }
             self.interactionLease = nil; self.runner = nil; self.cleanup = nil
             self.invocationSnapshot = nil
-            if !preservePresentation { self.adapterStartup = nil }
             if !preservePresentation {
-                self.model.phase = .idle; self.model.transcript = ""; self.model.steps = []
+                self.model.phase = .idle; self.model.transcript = ""; self.model.goal = ""; self.model.steps = []
             }
         }
     }
@@ -605,4 +594,24 @@ struct VoiceControlWritingConsentRequired: LocalizedError {
     var errorDescription: String? {
         "Enable selected-text sharing with your writing provider in Voice Control setup first."
     }
+}
+
+
+/// Main-actor submission identity plus a thread-safe fence carried across the
+/// runner actor hop. Stop invalidates preparation, not only existing effects.
+@MainActor
+final class VoiceControlSubmissionState {
+    private var current: ActionAuthority?
+    func begin() -> ActionAuthority {
+        invalidate()
+        let token = ActionAuthority()
+        current = token
+        return token
+    }
+    func currentOrBegin() -> ActionAuthority {
+        if let current, current.isValid { return current }
+        return begin()
+    }
+    func invalidate() { current?.revoke(); current = nil }
+    func accepts(_ token: ActionAuthority) -> Bool { current === token && token.isValid }
 }

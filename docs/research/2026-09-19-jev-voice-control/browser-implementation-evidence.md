@@ -1,4 +1,6 @@
-# Browser implementation and qualification evidence
+# Historical extension implementation and qualification evidence
+
+**Superseded product direction:** this report qualifies the retired extension experiment. Current browser control uses native macOS Accessibility; this recording is not native-path evidence. See [native-accessibility-direction.md](native-accessibility-direction.md).
 
 Date: 2026-09-19. This records source and runtime evidence, not a release claim.
 

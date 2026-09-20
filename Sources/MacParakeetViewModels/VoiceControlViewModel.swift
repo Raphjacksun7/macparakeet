@@ -15,6 +15,10 @@ public struct VoiceControlConversationState: Sendable {
         default: break
         }
     }
+    public static func isCorrection(_ text: String) -> Bool {
+        let value = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return ["actually", "no,", "no ", "instead", "change that", "change the", "make it", "not ", "the other", "other one", "undo"].contains { value.hasPrefix($0) }
+    }
     public mutating func cancel() { expectedResponse = nil }
     public mutating func takeConfirmation() -> Bool {
         guard expectedResponse == .confirmation else { return false }
@@ -38,6 +42,13 @@ public final class VoiceControlViewModel {
     public var microphoneOn = false
     public var literalMode = false
     public var audioLevel: Float = 0
+    public var goal = ""
+    public var activityExpanded = false
+    public var diagnosticsExpanded = false
+    public var diagnosticsText = ""
+    public var diagnosticsStatus = "In-memory stages and outcomes. Commands and app text are excluded."
+    public var onRefreshDiagnostics: (() -> Void)?
+    public var onCopyDiagnostics: (() -> Void)?
     public var transcript = ""
     public var partialTranscript = ""
     public var message = "Hold Control–Option–Space to give an instruction."
@@ -46,17 +57,6 @@ public final class VoiceControlViewModel {
     public var keyInput = ""
     public var consent = false
     public var writingConsent = false
-    public var browserEnabled = false
-    public var browserChoice: VoiceControlBrowserChoice = .chrome
-    public var browserExtensionID = ""
-    public var replaceBrowserPairing = false
-    public var browserSetupStatus = "Native app control works without the browser extension."
-    public var isRegisteringBrowser = false
-    public var isConnectingBrowser = false
-    public var onConnectBrowser: (() -> Void)?
-    public var onOpenExtensionFolder: (() -> Void)?
-    public var onRegisterBrowser: (() -> Void)?
-    public var onBrowserDisabled: (() -> Void)?
     public var holdTrigger = HotkeyTrigger.chord(modifiers: ["control", "option"], keyCode: 49)
     public var onShortcutRecording: ((Bool) -> Void)?
     public var validateShortcut: ((HotkeyTrigger) -> HotkeyTrigger.ValidationResult)?
@@ -76,21 +76,31 @@ public final class VoiceControlViewModel {
     public var onRevokeConsent: (() -> Void)?
     public var onRevokeWritingConsent: (() -> Void)?
     public init() {}
+    public func appendActivity(_ detail: String) {
+        steps.append(detail)
+        if steps.count > 100 { steps.removeFirst(steps.count - 100) }
+    }
     public func apply(_ event: VoiceControlEvent) {
         conversation.receive(event)
+        switch event {
+        case .paused(let detail), .failed(let detail), .completed(let detail), .clarification(let detail): appendActivity(detail)
+        default: break
+        }
         switch event {
         case .observing: phase = .working; message = "Looking at the current app…"
         case .deciding: phase = .working; message = "Choosing the next step…"
         case .acting(let action):
             phase = .working; message = "Applying the next step…"
-            steps.append(action.operation.rawValue)
-            if steps.count > 12 { steps.removeFirst() }
+            appendActivity("Attempting: " + action.operation.rawValue)
         case .confirmation(_, let message): phase = .confirmation; self.message = message
         case .clarification(let message): phase = .clarification; self.message = message
         case .paused(let message): phase = .paused; self.message = message
         case .completed(let message): phase = .done; self.message = message
         case .failed(let message): phase = .failed; self.message = message
-        case .cancelled: phase = .idle; message = "Task cancelled."
+        case .activity(let detail): appendActivity(detail)
+        case .cancelled:
+            phase = .idle; message = "Task cancelled."
+            goal = ""; steps = []
         }
     }
 }

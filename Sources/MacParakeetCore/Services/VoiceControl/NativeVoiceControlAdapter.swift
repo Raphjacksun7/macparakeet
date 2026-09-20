@@ -44,10 +44,10 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         excludedBundleIDs: Set<String> = [
             "com.apple.keychainaccess", "com.1password.1password", "com.agilebits.onepassword7",
             "com.bitwarden.desktop", "com.apple.Passwords",
-        ], maxNodes: Int = 180, includeMenus: Bool = true, includeApplications: Bool = true
+        ], maxNodes: Int = 600, includeMenus: Bool = true, includeApplications: Bool = true
     ) {
         self.excludedBundleIDs = excludedBundleIDs
-        self.maxNodes = min(180, max(1, maxNodes))
+        self.maxNodes = min(800, max(1, maxNodes))
         self.includeMenus = includeMenus; self.includeApplications = includeApplications
     }
 
@@ -81,18 +81,19 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         if let focused = Self.element(app, kAXFocusedUIElementAttribute) { stack.append((focused, 0)) }
         var visited: Set<CFHashCode> = []
         var count = 0
+        var complete = true
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         let focused = Self.element(app, kAXFocusedUIElementAttribute)
         while let (node, depth) = stack.popLast() {
             try Task.checkCancellation()
-            guard count < maxNodes, ContinuousClock.now < deadline else { break }
+            guard count < maxNodes, ContinuousClock.now < deadline else { complete = false; break }
             let hash = CFHash(node)
             guard visited.insert(hash).inserted else { continue }
             count += 1
             let role = Self.string(node, kAXRoleAttribute)
             guard !Self.isSecure(node, role: role), Self.attribute(node, "AXHidden") as? Bool != true else { continue }
-            let label = Self.label(node)
-            let visible = Self.isVisible(node)
+            var label = Self.label(node)
+            let visible = Self.isVisible(node, within: root)
             let readableValue = visible ? Self.attribute(node, kAXValueAttribute) : nil
             let value = (readableValue as? String) ?? (readableValue as? NSNumber)?.stringValue ?? ""
             let enabled = Self.attribute(node, kAXEnabledAttribute) as? Bool ?? true
@@ -100,21 +101,23 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             var actionNames: CFArray?
             AXUIElementCopyActionNames(node, &actionNames)
             let actions = actionNames as? [String] ?? []
+            if visible { label = Self.actionLabel(label, value: value, role: role, pressable: actions.contains(kAXPressAction)) }
             if visible, enabled, actions.contains(kAXPressAction) { operations.insert(.press) }
-            if visible, readableValue is String, enabled,
-                [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role),
-                Self.settable(node, kAXValueAttribute)
-            {
-                operations.formUnion([.setValue, .insertText])
+            if visible, enabled {
+                operations.formUnion(Self.textOperations(
+                    role: role, readableValue: readableValue is String,
+                    valueSettable: Self.settable(node, kAXValueAttribute),
+                    selectionSettable: Self.settable(node, kAXSelectedTextAttribute)))
             }
             if visible, role == kAXScrollAreaRole { operations.insert(.scroll) }
             if visible, let focused, CFEqual(focused, node), enabled { operations.insert(.key) }
             if !operations.isEmpty {
-                let id = "\(snapshotID.uuidString):\(targets.count)"
+                let id = "n:\(targets.count)"
+                let publicLabel = Self.contextLabel(label, role: role)
                 let target = VoiceControlTarget(
-                    id: id, label: String(label.prefix(240)), role: role,
-                    value: value.isEmpty ? nil : String(value.prefix(500)), operations: operations,
-                    isNavigation: Self.isOrdinaryControl(node, role: role),
+                    id: id, label: String(publicLabel.prefix(240)), role: role,
+                    value: value.isEmpty || publicLabel != label ? nil : String(value.prefix(500)), operations: operations,
+                    isNavigation: Self.isOrdinaryControl(role: role, pressable: operations.contains(.press)),
                     isFocused: focused.map { CFEqual($0, node) } ?? false,
                     selectedText: Self.completeSelection(node),
                     valueIsComplete: value.count <= 500)
@@ -128,13 +131,16 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             // Closed menus can expose recent documents and account names through
             // AX even though they are not visible. Never enumerate their children.
             let closedMenu = role == kAXMenuBarItemRole && (Self.attribute(node, kAXSelectedAttribute) as? Bool != true)
-            if depth < 18, !closedMenu, let children = Self.attribute(node, kAXChildrenAttribute) as? [AXUIElement] {
-                stack.append(contentsOf: children.prefix(250).reversed().map { ($0, depth + 1) })
+            if !closedMenu, let children = Self.attribute(node, kAXChildrenAttribute) as? [AXUIElement] {
+                if depth < 32 {
+                    if children.count > 250 { complete = false }
+                    stack.append(contentsOf: children.prefix(250).reversed().map { ($0, depth + 1) })
+                } else if !children.isEmpty { complete = false }
             }
         }
         for (appPID, appName, appBundle) in running.prefix(includeApplications ? 15 : 0)
         where !excludedBundleIDs.contains(appBundle) {
-            let id = "\(snapshotID.uuidString):app:\(appPID)"
+            let id = "app:\(appPID)"
             applications[id] = appPID
             targets.append(
                 VoiceControlTarget(
@@ -144,7 +150,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             Date().timeIntervalSince(undo.time) < 30,
             Self.attribute(undo.element.value, kAXValueAttribute) as? String == undo.after
         {
-            let id = "\(snapshotID.uuidString):undo"
+            let id = "undo"
             let target = VoiceControlTarget(
                 id: id, label: "Undo last text edit", role: "undo", operations: [.press], isNavigation: true)
             targets.append(target)
@@ -159,7 +165,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         let snapshot = VoiceControlSnapshot(
             id: snapshotID, contextID: contextID, applicationName: name,
             targets: targets, summary: String(([title] + text).joined(separator: "\n").prefix(4000)),
-            isComplete: stack.isEmpty)
+            isComplete: complete && stack.isEmpty)
         current = snapshot
         return snapshot
     }
@@ -199,7 +205,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             throw NativeVoiceControlError.unsupported
         }
         let node = bound.element.value
-        guard Self.isVisible(node), Self.fingerprint(node) == bound.fingerprint,
+        guard Self.isVisible(node, within: expectedWindow.value), Self.fingerprint(node) == bound.fingerprint,
             !Self.isSecure(node, role: bound.target.role)
         else {
             throw NativeVoiceControlError.targetChanged
@@ -251,18 +257,27 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             try validateContext()
             guard Self.fingerprint(node) == bound.fingerprint else { throw NativeVoiceControlError.targetChanged }
             try await validateForeground(expectedPID: expectedPID, expectedWindow: expectedWindow)
+            // Replace only the selected span in rich text. Setting AXValue on
+            // an NSTextView can flatten styling and attachments in the document.
+            let usesSelection = action.operation == .insertText && Self.settable(node, kAXSelectedTextAttribute)
+            let plainField = [kAXTextFieldRole, kAXComboBoxRole].contains(bound.target.role)
+            guard usesSelection || plainField else { throw NativeVoiceControlError.unsupported }
             let status = try authority.perform {
-                return AXUIElementSetAttributeValue(node, kAXValueAttribute as CFString, replacement as CFString)
+                AXUIElementSetAttributeValue(node,
+                    (usesSelection ? kAXSelectedTextAttribute : kAXValueAttribute) as CFString,
+                    (usesSelection ? supplied : replacement) as CFString)
             }
-            guard status == .success else {
-                return VoiceControlReceipt(status: .failed, message: "The app rejected the text change.")
+            // Browser accessibility caches can lag a successful setter. Verify
+            // the same retained control with bounded reads; never retry the write.
+            let verified = await verifyTextValue(node, expected: replacement, authority: authority)
+            if plainField, verified {
+                undoEdit = (Element(value: node), expectedWindow, beforeValue, replacement, expectedPID, Date())
             }
-            if Self.attribute(node, kAXValueAttribute) as? String == replacement, let window {
-                undoEdit = (Element(value: node), window, beforeValue, replacement, processID, Date())
-            }
+            if !plainField { undoEdit = nil }
             return VoiceControlReceipt(
-                status: Self.attribute(node, kAXValueAttribute) as? String == replacement ? .verified : .unknown,
-                message: "Checked the text field after the change.")
+                status: verified ? .verified : .unknown,
+                message: verified ? "Checked the text field after the change."
+                    : status == .success ? "Text was dispatched; its result could not be verified." : "The app reported a text error; check whether it changed.")
         case .press, .select:
             let beforeTransition = transitionEvidence()
             try validateContext()
@@ -272,19 +287,23 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 return AXUIElementPerformAction(node, kAXPressAction as CFString)
             }
             guard status == .success else {
-                return VoiceControlReceipt(status: .failed, message: "The app rejected the press.")
+                // AX errors can arrive after an app handled the action. Without
+                // a definitive postcondition, retrying could duplicate a commitment.
+                return VoiceControlReceipt(status: .unknown, message: "The app reported a press error; check whether the action completed.")
             }
             try await Task.sleep(for: .milliseconds(120))
             // A successful AX return only proves dispatch. Controls with observable state
             // changes can be verified; generic buttons must remain unknown.
             if bound.target.role == kAXCheckBoxRole || bound.target.role == kAXRadioButtonRole {
+                let after = Self.attribute(node, kAXValueAttribute)
+                let afterValue = (after as? String) ?? (after as? NSNumber)?.stringValue
                 return VoiceControlReceipt(
-                    status: Self.string(node, kAXValueAttribute) != beforeValue ? .verified : .unknown,
+                    status: afterValue.map { $0 != beforeValue } == true ? .verified : .unknown,
                     message: "Checked the control’s state.")
             }
             if bound.target.role == kAXPopUpButtonRole || bound.target.role == kAXMenuBarItemRole {
-                let children = Self.attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
-                if children.contains(where: { Self.string($0, kAXRoleAttribute) == kAXMenuRole }) {
+                if Self.attribute(node, "AXExpanded") as? Bool == true ||
+                    (bound.target.role == kAXMenuBarItemRole && Self.attribute(node, kAXSelectedAttribute) as? Bool == true) {
                     return VoiceControlReceipt(status: .verified, message: "Menu opened.")
                 }
             }
@@ -348,6 +367,15 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         }
     }
 
+    private func verifyTextValue(_ node: AXUIElement, expected: String, authority: ActionAuthority) async -> Bool {
+        for attempt in 0..<6 {
+            guard authority.isValid, !Task.isCancelled else { return false }
+            if Self.attribute(node, kAXValueAttribute) as? String == expected { return true }
+            if attempt < 5 { try? await Task.sleep(for: .milliseconds(60)) }
+        }
+        return false
+    }
+
     /// Bounded structural evidence, not a model's success assertion. Changes to
     /// editable values, menus, URLs or window identity permit fresh planning.
     private func transitionEvidence() -> Set<String> {
@@ -358,14 +386,14 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         var queue = [root]
         var visited: Set<CFHashCode> = []
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(350))
-        while let node = queue.popLast(), visited.count < 80, ContinuousClock.now < deadline {
+        while let node = queue.popLast(), visited.count < 200, ContinuousClock.now < deadline {
             guard visited.insert(CFHash(node)).inserted else { continue }
             let role = Self.string(node, kAXRoleAttribute)
             guard !Self.isSecure(node, role: role), Self.attribute(node, "AXHidden") as? Bool != true else { continue }
             if Self.isVisible(node),
                 [
                     kAXTextFieldRole, kAXComboBoxRole, kAXPopUpButtonRole, kAXMenuRole, kAXMenuItemRole,
-                    kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole, "AXWebArea", "AXLink",
+                    kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole, kAXStaticTextRole, "AXWebArea", "AXLink",
                 ].contains(role)
             {
                 evidence.insert(
@@ -417,12 +445,43 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             || ["password", "passcode", "one-time", "verification code", "api key", "secret", "credit card"].contains(
                 where: name.contains)
     }
-    private static func isOrdinaryControl(_ node: AXUIElement, role: String) -> Bool {
-        // Only disclosure is intrinsically non-consequential. A checkbox or
-        // HTTP link can subscribe, share, accept or otherwise commit a change.
-        [kAXMenuBarItemRole, kAXPopUpButtonRole].contains(role)
+    static func actionLabel(_ label: String, value: String, role: String, pressable: Bool) -> String {
+        // Web list choices can be pressable static text with their name only in AXValue.
+        guard label.isEmpty, role == kAXMenuItemRole || (role == kAXStaticTextRole && pressable) else { return label }
+        return value
     }
-    private static func isVisible(_ node: AXUIElement) -> Bool {
+
+    static func contextLabel(_ label: String, role: String) -> String {
+        // Browser account badges expose personal names/emails in their accessible
+        // descriptions. The task needs the menu capability, not that identity.
+        guard [kAXButtonRole, kAXPopUpButtonRole, "AXMenuButton"].contains(role) else { return label }
+        let lower = label.lowercased()
+        if lower.hasPrefix("google account:") { return "Account menu" }
+        if lower.hasPrefix("profile:") || lower.hasPrefix("profile ") { return "Browser profile menu" }
+        return label
+    }
+
+    static func textOperations(role: String, readableValue: Bool, valueSettable: Bool,
+                               selectionSettable: Bool) -> Set<VoiceControlOperation> {
+        guard readableValue, [kAXTextFieldRole, kAXComboBoxRole, kAXTextAreaRole].contains(role) else { return [] }
+        var result: Set<VoiceControlOperation> = []
+        if [kAXTextFieldRole, kAXComboBoxRole].contains(role), valueSettable {
+            result.formUnion([.setValue, .insertText])
+        }
+        if selectionSettable { result.insert(.insertText) }
+        return result
+    }
+    static func isOrdinaryControl(role: String, pressable: Bool) -> Bool {
+        // Opening selectors and choosing an offered option is ordinary task
+        // work. A checkbox or HTTP link can still subscribe, share, or commit.
+        if [kAXMenuBarItemRole, kAXPopUpButtonRole, kAXMenuItemRole, kAXComboBoxRole, kAXRadioButtonRole]
+            .contains(role)
+        {
+            return true
+        }
+        return role == kAXStaticTextRole && pressable
+    }
+    private static func isVisible(_ node: AXUIElement, within window: AXUIElement? = nil) -> Bool {
         guard attribute(node, "AXHidden") as? Bool != true,
             let rawPosition = attribute(node, kAXPositionAttribute),
             let rawSize = attribute(node, kAXSizeAttribute),
@@ -436,6 +495,17 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             extent.width > 0, extent.height > 0
         else { return false }
         let frame = CGRect(origin: point, size: extent)
+        if let window, ![kAXMenuBarItemRole, kAXMenuItemRole, kAXMenuRole].contains(string(node, kAXRoleAttribute)),
+           let windowPosition = attribute(window, kAXPositionAttribute),
+           let windowSize = attribute(window, kAXSizeAttribute),
+           CFGetTypeID(windowPosition) == AXValueGetTypeID(), CFGetTypeID(windowSize) == AXValueGetTypeID() {
+            let wp = unsafeDowncast(windowPosition as AnyObject, to: AXValue.self)
+            let ws = unsafeDowncast(windowSize as AnyObject, to: AXValue.self)
+            var origin = CGPoint.zero; var dimensions = CGSize.zero
+            guard AXValueGetType(wp) == .cgPoint, AXValueGetType(ws) == .cgSize,
+                  AXValueGetValue(wp, .cgPoint, &origin), AXValueGetValue(ws, .cgSize, &dimensions),
+                  CGRect(origin: origin, size: dimensions).intersects(frame) else { return false }
+        }
         var displays = [CGDirectDisplayID](repeating: 0, count: 32)
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(32, &displays, &count) == .success else { return false }

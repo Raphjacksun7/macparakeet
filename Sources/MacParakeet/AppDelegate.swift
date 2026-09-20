@@ -685,7 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let control = VoiceControlCoordinator(
                 sharedMicStream: env.sharedMicStream,
                 scheduler: env.sttScheduler,
-                adapter: VoiceControlBrowserMultiplexer(native: NativeVoiceControlAdapter(), browser: VoiceControlBrowserAdapter()),
+                adapter: NativeVoiceControlAdapter(),
                 rewrite: { [llmService = env.llmService] text, instruction in
                     guard UserDefaults.standard.bool(forKey: "voiceControl.writingConsent.v1") else {
                         throw VoiceControlWritingConsentRequired()

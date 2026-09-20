@@ -7,9 +7,9 @@ Voice Control consumes committed speech separately from dictation insertion. The
 - `VoiceControlSnapshot.id` identifies one observation. Opaque target IDs are valid only for that observation; an adapter must revalidate context, target and required capabilities immediately before acting.
 - `ActionAuthority` is synchronously revocable. Check it before each effect/chunk; use `perform` for a synchronous final check plus event dispatch. Never hold it across awaited I/O. Call `cancelAndDrain()` before releasing UI mutation ownership; immediate revocation does not mean an in-flight adapter call has returned. Do not call `revoke` from inside `perform`.
 - Adapter receipts distinguish verified effects, observed interface transitions, unknown outcomes and failures. A meaningful transition allows fresh replanning but is not proof of goal completion; executed history carries its receipt status. Identical operation/label/value against the same semantic pre-state cannot dispatch twice, even when snapshot IDs change. Unknown outcomes stop automatic advancement and require a new instruction before another effect. Never replay an uncertain effect automatically.
-- Model completion is explicitly described as inferred. The runner never equates Jev's `finished` choice with independent proof of all goal conditions. An incomplete observation cannot establish completion.
-- Unknown presses, keyboard effects, and explicitly flagged generated replacements require a confirmation tied to the original authority and snapshot. Stop invalidates that authority immediately. Confirmation expires after 20 seconds.
-- One task is bounded to 12 dispatched effects, 30 decisions and 60 seconds. Failed/unknown dispatched effects count. Resume and confirmation retain these limits; a new instruction starts a new task. Two consecutive semantically unchanged observations stop the loop.
+- Model completion is explicitly described as inferred. The runner never equates Jev's `finished` choice with independent proof of all goal conditions. Partial observations are explicitly described as incomplete evidence; neither partial nor complete snapshots independently prove the goal.
+- Payment, destructive deletion, external commitments, unknown consequences, and explicitly flagged generated replacements require a confirmation tied to the original authority and snapshot. Stop invalidates that authority immediately. Confirmation expires after 20 seconds.
+- One experimental task is bounded to 40 dispatched effects, 100 decisions and 180 seconds of active automation. Time spent awaiting a human correction, confirmation or manual repair does not count. Failed/unknown dispatched effects count. Resume and confirmation retain these limits; a new instruction starts a new task. Two consecutive semantically unchanged observations stop the loop.
 - Incoming committed instructions revoke the old task, wait for its in-flight effect to return, then run only the newest pending instruction. `clarify` preserves the original goal and verified history.
 
 ## Jev boundary
@@ -23,3 +23,15 @@ Requests that exceed 200 targets, 24 editable targets, an 8 KB instruction, 16 K
 ## Verification
 
 `swift test --filter VoiceControlCoreTests` checks revocation, expired-by-Stop confirmation, unknown-effect non-replay, strict response validation, source-span preservation, no request without consent, and no response/key reflection on errors. These are fixture checks, not real microphone/browser qualification. See the research qualification record for runtime evidence.
+
+## Correction, manual takeover and observability
+
+`revise` amends the goal without deleting actual effect receipts. The next decision receives the original goal and newer overriding instructions, bypassing direct-command completion shortcuts. Recent `other one` repair uses observed alternatives, excludes the rejected control and asks when several alternatives remain. References expire after 30 seconds.
+
+`pauseForManualInput` yields execution without discarding the task. `continueTask` takes a fresh observation and retains changed complete field values as manual overrides. A manually switched app/window requires returning to the original context or a new instruction; repeated Continue does not authorize an unrelated context. Unknown effects are retained in history and cannot repeat even after correction. Continue may inspect the result or choose a different step.
+
+Stop cancels child observation/model tasks while continuing to drain any already-dispatched adapter effect. `waitForIdle` is the ownership-release boundary without destroying task history; `cancelAndDrain` also clears task content. Confirmation expiry emits a visible pause event without waiting for a later click.
+
+Consequence policy treats ordinary form entry, navigation, selectors, dates and searching as authorized task steps. A typed Jev consequence assessment supplements local policy; definite payment/deletion/external-commitment evidence cannot be downgraded by a model's ordinary classification. Typing into a payment form is not itself payment. Generated rewrites still require their explicit preview acceptance.
+
+The runner keeps at most 256 content-minimized local trace records in memory. Records contain correlation IDs, revision, stage, operation, policy/outcome codes, durations, coverage/counts and available model/score metadata. They contain no command, target label, field value, selection, audio, screenshot, credential or remote error body. Actual task content appears separately in ephemeral panel activity events. There is no automatic persistence, upload or effect replay; UI inspection/copy is explicit.

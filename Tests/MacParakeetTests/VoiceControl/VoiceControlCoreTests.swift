@@ -105,7 +105,7 @@ final class VoiceControlCoreTests: XCTestCase {
         var iterator = runner.events.makeAsyncIterator()
         var final: VoiceControlEvent?
         // Exactly observing/deciding/acting, then observing/deciding/completed.
-        for _ in 0..<6 { final = await iterator.next() }
+        for _ in 0..<7 { final = await iterator.next() }
         XCTAssertEqual(final, .completed("Text entered."))
     }
 
@@ -183,7 +183,7 @@ private actor CoreTestAdapter: VoiceControlAdapter {
             contextID: "test", applicationName: "Fixture",
             targets: [
                 VoiceControlTarget(
-                    id: "t1", label: "Send", role: "button", operations: [.press], isNavigation: navigation)
+                    id: "t1", label: navigation ? "Next" : "Send", role: "button", operations: [.press], isNavigation: navigation)
             ])
     }
     func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws

@@ -61,6 +61,12 @@ A future local text-to-speech interaction could make consequential confirmation 
 
 Qualify the result through ordinary multistep tasks that complete without repeated confirmation, alongside a consequential-action example that stops at the actual commitment boundary. Document the implemented distinction and remaining limitations. The main agent should choose the implementation; this is product direction, not a prescribed classifier or policy architecture.
 
+## Further user decisions and research
+
+Keep the existing experimental Voice Control panel. Bring-your-own Jev key is accepted. Retain the voice-to-Transform integration while keeping the existing Transform feature unchanged. Prioritize contextual correction/recovery and first-class local command observability. Manual takeover is the initial behavior; preserve room for future interleaved speech, typing, and mouse input. Larger experimental task budgets are acceptable without removing cancellation and no-progress protection.
+
+See [correction, recovery, mixed input, and observability](correction-recovery-observability-direction.md) for the user intent, primary-source research, proposed experience, and open evaluation questions. It intentionally leaves implementation structure to the main agent.
+
 ## Scope of this handoff
 
 This side conversation requested a direction document only. No implementation, packaging, git-state changes, or agent coordination were performed here. The main thread remains responsible for applying the direction and completing its authorized implementation and verification work.
