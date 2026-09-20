@@ -231,7 +231,9 @@ single-occurrence replacement, activating a uniquely named running app,
 opening an allowlisted web destination, filling an already-open search box
 on YouTube/Maps/Wikipedia/Google Search, pressing unique Gmail Compose, and
 the Google Flights form plan (trip type, origin, destination, date, unique
-autocomplete, overlay Escape, Search). Jev is never offered `role=url`
+autocomplete, overlay Escape, Search). Competing overlay suggestions become
+enabled events for one Jev Choice; Return is not enabled while a suggestion
+or date picker is open. Jev is never offered `role=url`
 destinations. Literal mode treats utterances as text; isolated
 `command mode` exits and `command stop` pauses. `type literally command mode`
 enters those words. Prefix handling must preserve the payload rather than

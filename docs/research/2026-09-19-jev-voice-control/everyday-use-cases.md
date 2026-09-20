@@ -6,7 +6,7 @@ The product contract: ordinary speech/typed intent drives the frontmost Mac/brow
 
 ## Live evidence (2026-09-20)
 
-Google Flights inbox turn in the Dev app **has not yet produced a results list**. Latest sessions locally open Flights, fill Zurich/London, commit city suggestions (including `Zürich` vs `Zurich`), type the date, and sometimes expose the September 20 calendar cell. The 2026-09-19 23:03 session stalled because Return ran while the origin overlay was still open (`duplicate_blocked`). Router tests now Escape that overlay and move focus instead of replaying Escape. Do not treat Flights as acceptance-complete.
+Google Flights inbox turn in the Dev app **has not yet produced a results list**. Latest sessions locally open Flights, fill Zurich/London, commit city suggestions (including `Zürich` vs `Zurich`), type the date, and sometimes expose the September 20 calendar cell. The 2026-09-19 23:03 session stalled because Return ran while the origin overlay was still open (`duplicate_blocked`). The decision machine now classifies that overlay as `suggestionPicker` and **does not enable Return**. Competing city rows are a Jev Choice; a unique match stays local. Do not treat Flights as acceptance-complete.
 
 YouTube / Maps / Wikipedia / web search / Gmail compose are unit-covered at the same local-router bar; they have not been live-qualified in this pass.
 

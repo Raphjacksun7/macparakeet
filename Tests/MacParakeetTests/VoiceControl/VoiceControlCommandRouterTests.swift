@@ -39,6 +39,16 @@ final class VoiceControlCommandRouterTests: XCTestCase {
         let result = try await router.decide(goal: "type " + text, snapshot: snapshot, history: [])
         XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: text)))
     }
+    func testReplaceWithNoSourcePhraseAsksInsteadOfCrashing() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let result = try await router.decide(
+            goal: "replace with Friday", snapshot: editable("See you tomorrow"), history: [])
+        guard case .clarify(let message) = result else {
+            return XCTFail("A missing source phrase must not build an invalid string range")
+        }
+        XCTAssertTrue(message.lowercased().contains("which exact words"))
+    }
+
     func testAmbiguousReplacementDoesNotChangeWholeField() async throws {
         let router = VoiceControlCommandRouter(fallback: MustNotDecide())
         let result = try await router.decide(

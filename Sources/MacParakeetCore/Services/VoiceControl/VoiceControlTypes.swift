@@ -109,6 +109,10 @@ public enum VoiceControlDecision: Sendable, Equatable {
 public protocol VoiceControlDecisionEngine: Sendable {
     func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
         -> VoiceControlDecision
+    func decide(
+        goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction],
+        events: [VoiceControlEnabledEvent]
+    ) async throws -> VoiceControlDecision
 }
 
 public enum VoiceControlEvent: Sendable, Equatable {

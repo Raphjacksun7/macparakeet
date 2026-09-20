@@ -66,10 +66,16 @@ raw audio/screenshot recording. See the linked direction documents in the plan.
 
 The DEBUG experiment now includes:
 
-- Native AX for apps and the user's existing browser; no extension or CDP.
+- Native AX for apps and the user's existing browser; no required extension or CDP.
+  An optional connected-tab DOM adapter may supply page candidates later; AX
+  remains the fallback and the Flights acceptance path.
 - Local routes for allowlisted sites, Google Flights form filling, ordinary
   web search boxes, Gmail Compose, and app activation. Jev never receives
   `role=url` destinations.
+- Decision machine: `VoiceControlSituation` + enabled events. Unique events
+  execute locally. Competing events are one Jev Choice. Return is not enabled
+  while a suggestion or date picker is open. See
+  `docs/research/2026-09-19-jev-voice-control/jev-decision-architecture.md`.
 - Joinable per-step traces plus one wide event per turn (`latest.md`). Local
   logs may include the instruction and control labels; Copy diagnostics omits
   them. Field values stay out.

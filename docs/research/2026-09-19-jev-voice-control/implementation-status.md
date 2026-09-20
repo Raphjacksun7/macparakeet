@@ -8,11 +8,13 @@ or integrated microphone qualification.
 
 Native Voice Control is implemented as a DEBUG experiment (`--enable-voice-control`).
 Local routes cover allowlisted sites, Flights form filling, ordinary web search
-boxes, Gmail Compose, and app activation. Joinable wide-event traces are on disk.
-A live typed Flights turn opened the site and filled Zurich/London/date, then
-stalled on the origin overlay (`duplicate_blocked` on Return/Escape). Fixture
-tests now refuse Return while that overlay is open. **ZRH→LON results have not
-been demonstrated.** See [findings-2026-09-20.md](findings-2026-09-20.md).
+boxes, Gmail Compose, and app activation. Decisions now go through a situation +
+enabled-event machine: unique events stay local, competing overlay cities are a
+Jev Choice, and Return is not enabled on a suggestion/date picker. Joinable
+wide-event traces are on disk. A live typed Flights turn has still not produced
+ZRH→LON results; the overlay stall is now illegal in the machine rather than a
+hope that Jev will avoid Return. See [jev-decision-architecture.md](jev-decision-architecture.md)
+and [findings-2026-09-20.md](findings-2026-09-20.md).
 
 A separate checkout at `/Users/dmoon/code/macparakeet-jev-pr` (`feat/jev-native-voice-control`)
 was a PR-gate snapshot of `b6aabd10` and does not include this later work. Do not

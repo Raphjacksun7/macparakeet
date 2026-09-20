@@ -20,6 +20,7 @@ Jev is a strong fit for the action-selection path. It should evaluate the curren
 4. [Evaluation and rollout](evaluation.md): 30 task templates, 42 failure/correction families, independent oracles, route-specific metrics, proposed latency targets and accessibility/hardware/locale matrix.
 5. [Platform and additional implementations](platform-and-ecosystem.md): official Jev facts, measured-vs-claimed evidence, Jev Ultrafast source review, six additional open-source projects and current MacParakeet reuse boundaries.
 6. [North-star computer use](north-star-computer-use.md) and [what we adopted](north-star-adoption.md): synthesis of the `references/` Jev and computer-use checkouts, plus the everyday magic catalog in [everyday-use-cases.md](everyday-use-cases.md).
+7. [Jev decision architecture](jev-decision-architecture.md): code lists legal events; Jev chooses only when more than one is enabled. Consults: [GPT-6 Astra](consult-gpt6-astra-jev-architecture.md), [Fable 5.1](consult-fable-jev-architecture.md), [Avidlive sheets](avidlive-jev-engineering.md).
 
 ## What to take from each reference
 
@@ -57,6 +58,8 @@ No reference application, speech session, desktop action, or model request was e
 - [Sonnet UX research](sonnet-ux-research.md): requested `claude-sonnet-5`, high effort, through `claude -p`; independent suggestions with source-quality caveats. Parent editorial reconciliation is included at its start. Its broader claims are not automatically adopted.
 - [Architecture review](review-architecture.md) and [product review](review-product.md): independent critique of the written plan; findings and dispositions are captured in [review resolutions](review-resolutions.md).
 - [Fable review](fable-review.md): requested `claude-fable-5-1`, medium effort, for a fresh assessment of coherence and interaction quality.
+- [Jev decision architecture](jev-decision-architecture.md) and consults: [GPT-6 Astra](consult-gpt6-astra-jev-architecture.md), [Fable 5.1 high](consult-fable-jev-architecture.md).
+- [Avidlive Jev Engineering](avidlive-jev-engineering.md): four-sheet source extraction plus Voice Control mapping. Fable 5.1 medium second review: [consult-fable-avidlive-jev-engineering.md](consult-fable-avidlive-jev-engineering.md).
 - Delegation prompts are preserved under [briefs](briefs/). Reference checkout identities and public permalinks live in each report. The documents stand alone without requiring the ignored local checkout folder.
 
-`/references/` was added to the repository `.gitignore` as requested. Local checkouts and fetched source caches remain on disk. No commit, push, issue, website publication or deployment was performed.
+`/references/` stays gitignored. Local checkouts remain on disk. The DEBUG experiment and decision-machine docs land in this PR; live Flights results and microphone qualification are still unproven.

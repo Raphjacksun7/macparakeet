@@ -51,12 +51,18 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
             }
             return result(VoiceControlAction(operation: .insertText, targetID: focused[0].id, value: payload))
         }
-        if lower.hasPrefix("replace "), let delimiter = command.range(of: " with ", options: .caseInsensitive) {
+        // Empty source ("replace with X") is a local clarify, never a Jev call.
+        if lower.hasPrefix("replace ") {
+            guard let delimiter = command.range(of: " with ", options: .caseInsensitive),
+                let prefix = command.range(of: "replace ", options: .caseInsensitive),
+                delimiter.lowerBound >= prefix.upperBound
+            else {
+                return .clarify("Which exact words should I replace?")
+            }
             guard focused.count == 1, focused[0].valueIsComplete, let value = focused[0].value else {
                 return .clarify("Focus a supported text field with its complete text available.")
             }
-            let source = Self.unquote(
-                String(command[command.index(command.startIndex, offsetBy: 8)..<delimiter.lowerBound]))
+            let source = Self.unquote(String(command[prefix.upperBound..<delimiter.lowerBound]))
             let replacement = Self.unquote(String(command[delimiter.upperBound...]))
             guard !source.isEmpty else { return .clarify("Which exact words should I replace?") }
             let occurrences = value.ranges(of: source)
@@ -103,10 +109,14 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         if let plan = VoiceControlFlightPlan.parse(command),
             VoiceControlWebDestination.isCurrent(
                 VoiceControlWebDestination.named("web:google-flights") ?? VoiceControlWebDestination.all[0],
-                snapshot: snapshot, history: history),
-            let action = plan.nextAction(in: snapshot, history: history)
+                snapshot: snapshot, history: history)
         {
-            return .action(action)
+            let frame = plan.frame(in: snapshot, history: history)
+            if frame.events.count == 1 { return .action(frame.events[0].action) }
+            if frame.events.count > 1 {
+                return try await fallback.decide(
+                    goal: command, snapshot: snapshot, history: history, events: frame.events)
+            }
         }
         if let query = VoiceControlWebQuery.parse(command),
             let destination = VoiceControlWebDestination.named(query.destinationID),

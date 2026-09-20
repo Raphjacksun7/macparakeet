@@ -31,6 +31,26 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
         return plan
     }
 
+    /// Legal next moves. One event is executed locally; several become Jev Choices.
+    public func frame(in snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) -> VoiceControlMachineFrame {
+        let situation = VoiceControlSituation.classify(snapshot)
+        if let competing = competingCitySuggestions(in: snapshot, history: history), competing.count > 1 {
+            return VoiceControlMachineFrame(
+                machine: "flights", situation: situation, state: "choose_suggestion", events: competing)
+        }
+        if let action = nextAction(in: snapshot, history: history) {
+            return VoiceControlMachineFrame(
+                machine: "flights", situation: situation, state: situation.rawValue,
+                events: [
+                    VoiceControlEnabledEvent(
+                        id: "\(action.operation.rawValue):\(action.targetID)",
+                        criteria: action.targetLabel ?? action.value ?? action.operation.rawValue,
+                        action: action)
+                ])
+        }
+        return VoiceControlMachineFrame(machine: "flights", situation: situation, state: "blocked", events: [])
+    }
+
     public func nextAction(in snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) -> VoiceControlAction? {
         if oneWay {
             if let oneWayControl = snapshot.targets.first(where: {
@@ -87,12 +107,35 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
             return ordinary(.press, search.id)
         }
         if overlayIsOpen(snapshot) { return dismissOverlay(snapshot, history: history) }
-        if let focused = snapshot.targets.first(where: { $0.isFocused && $0.operations.contains(.key) }),
+        if VoiceControlSituation.classify(snapshot) == .plain,
+            let focused = snapshot.targets.first(where: { $0.isFocused && $0.operations.contains(.key) }),
             !history.contains(where: { $0.operation == .key && $0.value == "return" })
         {
             return ordinary(.key, focused.id, "return")
         }
         return nil
+    }
+
+    private func competingCitySuggestions(in snapshot: VoiceControlSnapshot, history: [VoiceControlAction])
+        -> [VoiceControlEnabledEvent]?
+    {
+        guard let last = history.last, last.operation == .setValue, let value = last.value, value.count >= 3,
+            last.receiptStatus == .verified || last.receiptStatus == .transitionObserved
+        else { return nil }
+        let matches = snapshot.targets.filter {
+            VoiceControlLegality.isCitySuggestion($0) && $0.label.localizedStandardContains(value)
+                && !alreadyPressed($0.label, history: history) && !isStaleOriginSuggestion($0, history: history)
+        }
+        let cities = matches.filter {
+            $0.label.contains(",") && !$0.label.localizedStandardContains("Airport")
+        }
+        let pool = cities.count > 1 ? cities : matches
+        guard pool.count > 1, !pool.contains(where: \.isFocused) else { return nil }
+        return pool.map {
+            VoiceControlEnabledEvent(
+                id: $0.id, criteria: "\($0.role): \($0.label)",
+                action: ordinary(.press, $0.id, label: $0.label))
+        }
     }
 
     private static func isOneWay(_ lower: String) -> Bool {
@@ -160,17 +203,7 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
     }
 
     private func overlayIsOpen(_ snapshot: VoiceControlSnapshot) -> Bool {
-        snapshot.targets.contains { isCitySuggestion($0) || isCalendarDay($0) }
-    }
-
-    private func isCitySuggestion(_ target: VoiceControlTarget) -> Bool {
-        target.operations.contains(.press) && target.role != "url" && target.role != "application"
-            && (target.label.contains(",") || target.label.localizedStandardContains("Airport"))
-            && !target.label.localizedStandardContains("Toggle")
-    }
-
-    private func isCalendarDay(_ target: VoiceControlTarget) -> Bool {
-        target.operations.contains(.press) && target.label.localizedStandardContains("departure date")
+        VoiceControlSituation.classify(snapshot) != .plain
     }
 
     private func dismissOverlay(_ snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) -> VoiceControlAction? {
