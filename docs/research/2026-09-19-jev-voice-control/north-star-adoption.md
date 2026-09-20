@@ -22,6 +22,7 @@
 | Fail-open: malformed Jev answer executes nothing | `hermes-jev-skills`, `jev-ultrafast` | `JevDecisionError.invalidResponse` |
 | Isolated typing-session grammar, filler-word-proof confirmation, joinable type utterances | VoiceCraft modes, blind.sh default-No, Skales card copy (always-allow refused); Fable 5.1 amendments | `VoiceControlSessionGrammar`, `VoiceControlConfirmationCopy`, router type-join |
 | Numbered local disambiguation bound to snapshot IDs | Apple Voice Control / Rango / Jarvis “which one”; OpenJarvis capability floor as philosophy | `VoiceControlSpokenPick`, `VoiceControlDecision.pick` |
+| Host AX tools compile unique names, reserved keys, and skip-if-already-typed before Jev | third-hand / mac-use / Apple Voice Control; Fable 5.1 medium tools-first | `VoiceControlLocalTools` |
 
 ## Explicitly not adopted
 

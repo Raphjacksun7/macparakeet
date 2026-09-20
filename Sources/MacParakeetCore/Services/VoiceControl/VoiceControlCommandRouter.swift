@@ -55,6 +55,12 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
             guard !payload.isEmpty, payload.utf16.count <= 32_000 else {
                 return .clarify("Say the text to enter, up to 32,000 characters.")
             }
+            if VoiceControlLocalTools.fieldAlreadyHolds(
+                String(command.dropFirst(prefix.count)), target: focused[0]),
+                (focused[0].selectedText ?? "").isEmpty
+            {
+                return .information("That text is already in the field.")
+            }
             return result(VoiceControlAction(operation: .insertText, targetID: focused[0].id, value: payload))
         }
         // Empty source ("replace with X") is a local clarify, never a Jev call.
@@ -84,32 +90,15 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
             }
             return result(VoiceControlAction(operation: .setValue, targetID: focused[0].id, value: changed))
         }
-        for prefix in ["click ", "press ", "open "] where lower.hasPrefix(prefix) {
-            let label = String(command.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if let last = history.last, last.receiptStatus == .verified,
-                [.press, .activateApp].contains(last.operation),
-                last.targetLabel?.caseInsensitiveCompare(label) == .orderedSame
-            {
-                return .directCompleted("Done. The requested change was verified.")
+        if let key = VoiceControlLocalTools.reservedKey(in: command) {
+            guard let target = snapshot.targets.first(where: { $0.isFocused && $0.operations.contains(.key) })
+            else {
+                return .clarify("Focus a field that can receive the \(key) key.")
             }
-            let matches = snapshot.targets.filter {
-                $0.role != "url"
-                    && $0.label.caseInsensitiveCompare(label) == .orderedSame
-                    && ($0.operations.contains(.press) || $0.operations.contains(.activateApp))
-            }
-            if matches.count == 1 {
-                return result(
-                    VoiceControlAction(
-                        operation: matches[0].operations.contains(.activateApp) ? .activateApp : .press,
-                        targetID: matches[0].id))
-            }
-            if matches.count > 1, matches.count <= 6 {
-                let labels = VoiceControlSpokenPick.displayLabels(matches)
-                return .pick(
-                    prompt: VoiceControlSpokenPick.prompt(labels: labels), labels: labels,
-                    targetIDs: matches.map(\.id))
-            }
-            if matches.count > 1 { return .clarify("More than one control is named \(label). Describe which one.") }
+            return result(VoiceControlAction(operation: .key, targetID: target.id, value: key))
+        }
+        if VoiceControlLocalTools.alreadyVerifiedNamedPress(command: command, history: history) {
+            return .directCompleted("Done. The requested change was verified.")
         }
         if let destination = VoiceControlWebDestination.matchingGoal(lower),
             snapshot.targets.contains(where: { $0.id == destination.id }),
@@ -162,15 +151,6 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         {
             return result(VoiceControlAction(operation: .press, targetID: target.id))
         }
-        let keys: Set<String> = [
-            "tab", "escape", "enter", "return", "left", "right", "up", "down", "backspace", "delete",
-        ]
-        let key = lower.hasPrefix("press ") ? String(lower.dropFirst(6)) : ""
-        if keys.contains(key),
-            let target = snapshot.targets.first(where: { $0.isFocused && $0.operations.contains(.key) })
-        {
-            return result(VoiceControlAction(operation: .key, targetID: target.id, value: key))
-        }
         if ["scroll down", "scroll up"].contains(lower) {
             let candidates = snapshot.targets.filter { $0.operations.contains(.scroll) }
             guard candidates.count == 1 else { return .clarify("Which part of the window should I scroll?") }
@@ -206,6 +186,10 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
                 VoiceControlAction(
                     operation: .insertText, targetID: focused[0].id,
                     value: rewritten, targetLabel: focused[0].label, requiresConfirmation: true))
+        }
+        if let named = VoiceControlLocalTools.namedPress(command: command, snapshot: snapshot) {
+            if case .action(let action) = named { return result(action) }
+            return named
         }
         if let landings = VoiceControlOutcomes.competingLandings(in: snapshot, goal: command),
             landings.count > 1
@@ -265,10 +249,15 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
             $0.operations.contains(.press) && !$0.label.isEmpty && $0.label.count <= 80
                 && uniqueLabels[$0.label.lowercased()]?.count == 1
         }
-        for target in pressable.prefix(3) { lines.append("• Click \(target.label)") }
+        for target in pressable.prefix(3) { lines.append("• Click \(target.label) — or just say \(target.label)") }
         if snapshot.targets.filter({ $0.isFocused && $0.operations.contains(.insertText) }).count == 1 {
             lines.append("• Type hello — inserts your exact words into the focused field")
             lines.append("• Typing mode — keep inserting until you say command mode or stop typing")
+            if snapshot.targets.contains(where: {
+                $0.isFocused && $0.operations.contains(.key)
+            }) {
+                lines.append("• Press return — sends the key, not a button named Return")
+            }
             if snapshot.targets.contains(where: {
                 $0.isFocused && $0.operations.contains(.setValue) && $0.valueIsComplete
             }) {
@@ -284,7 +273,7 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         if let app = snapshot.targets.first(where: {
             $0.operations.contains(.activateApp) && !$0.label.isEmpty && uniqueLabels[$0.label.lowercased()]?.count == 1
         }) {
-            lines.append("• Open \(app.label)")
+            lines.append("• Open \(app.label) — opens the app; click \(app.label) presses a control with that name")
         }
         if snapshot.targets.contains(where: { $0.role == "undo" }) { lines.append("• Undo last edit") }
         if lines.count == 1 {

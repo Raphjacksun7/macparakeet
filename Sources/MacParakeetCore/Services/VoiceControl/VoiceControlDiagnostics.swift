@@ -237,7 +237,8 @@ public enum VoiceControlConsequencePolicy {
         case .key:
             let key = action.value?.lowercased() ?? ""
             if ["tab", "escape", "left", "right", "up", "down"].contains(key) { return .ordinary }
-            if ["return", "enter"].contains(key), words.contains("search") { return .ordinary }
+            // Spoken/typed keys are host tools. Do not ask "are you sure?" for Return.
+            if ["return", "enter"].contains(key) { return .ordinary }
         case .press:
             // Pay/delete/send already returned above. Everything else should proceed;
             // asking about unlabeled chrome is the opposite of a magic loop.

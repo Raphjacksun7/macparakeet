@@ -236,6 +236,17 @@ final class VoiceControlRecoveryTests: XCTestCase {
         XCTAssertTrue(ingress.isValid)
     }
 
+    func testExpiredConfirmationReobservesAndCompletesTheAuthorizedAction() async {
+        let adapter = RecoveryAdapter()
+        await adapter.expireNextExecute()
+        let engine = RecoveryEngine([.action(.init(operation: .press, targetID: "alpha", targetLabel: "Alpha", consequence: .payment)), .finished])
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: engine)
+        await runner.submit("Commit this payment")
+        await runner.confirm()
+        let effects = await adapter.effects
+        XCTAssertEqual(effects.map(\.targetID), ["alpha"])
+    }
+
     func testConsequencePolicyAllowsOrdinaryTaskStepsAndProtectsCommitments() {
         func policy(_ label: String, operation: VoiceControlOperation = .press, assessment: VoiceControlConsequence = .ordinary) -> VoiceControlConsequence {
             VoiceControlConsequencePolicy.consequence(of: .init(operation: operation, targetID: "t", consequence: assessment), target: .init(id: "t", label: label, role: "control", operations: [operation]))
@@ -252,6 +263,10 @@ final class VoiceControlRecoveryTests: XCTestCase {
         XCTAssertEqual(policy("Delete file"), .destructive)
         XCTAssertEqual(policy("Send message"), .externalCommitment)
         XCTAssertEqual(policy("Payment amount", operation: .setValue), .ordinary)
+        let returnKey = VoiceControlAction(operation: .key, targetID: "t", value: "return")
+        let body = VoiceControlTarget(
+            id: "t", label: "Body", role: "text", operations: [.insertText, .key], isFocused: true)
+        XCTAssertEqual(VoiceControlConsequencePolicy.consequence(of: returnKey, target: body), .ordinary)
         let listOption = VoiceControlTarget(
             id: "t", label: "One way", role: "AXStaticText", operations: [.press], isNavigation: true)
         XCTAssertEqual(
@@ -275,10 +290,12 @@ private actor RecoveryAdapter: VoiceControlAdapter {
     var value = ""
     var effects: [VoiceControlAction] = []
     var context = "original"
+    var expireNext = false
     let unknownPress: Bool
     init(unknownPress: Bool = false) { self.unknownPress = unknownPress }
     func manuallySet(_ value: String) { self.value = value }
     func changeContext() { context = "other-window" }
+    func expireNextExecute() { expireNext = true }
     func observe() async throws -> VoiceControlSnapshot {
         VoiceControlSnapshot(contextID: context, applicationName: "Fixture", targets: [
             .init(id: "destination", label: "destination", role: "text", value: value, operations: [.setValue, .insertText], isFocused: true),
@@ -288,7 +305,12 @@ private actor RecoveryAdapter: VoiceControlAdapter {
         ])
     }
     func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws -> VoiceControlReceipt {
-        try authority.check(); effects.append(action)
+        try authority.check()
+        if expireNext {
+            expireNext = false
+            throw NativeVoiceControlError.observationExpired
+        }
+        effects.append(action)
         if [.setValue, .insertText].contains(action.operation) { value = action.value ?? "" }
         return .init(status: action.operation == .press && unknownPress ? .unknown : .verified)
     }

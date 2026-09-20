@@ -23,6 +23,7 @@ Jev is a strong fit for the action-selection path. It should evaluate the curren
 7. [Jev decision architecture](jev-decision-architecture.md): code lists legal events; Jev chooses only when more than one is enabled. Competing picker rows are outcomes, not keystrokes ([predict outcomes](jev-outcome-choice.md)). Consults: [GPT-6 Astra](consult-gpt6-astra-jev-architecture.md), [Fable 5.1](consult-fable-jev-architecture.md), [Avidlive sheets](avidlive-jev-engineering.md).
 8. [Accessibility / voice primitives](accessibility-voice-primitives.md): `blind.sh`, VoiceCraft, Skales — modes, confirmation copy, traps. Not Jev. Fable 5.1 medium: [consult-fable-accessibility-voice-primitives.md](consult-fable-accessibility-voice-primitives.md).
 9. [Jarvis-family / intent capture](jarvis-family-primitives.md): `J.A.R.V.I.S`, `Jarvis`, `Jarvis-Desktop-Voice-Assistant`, OpenJarvis. Numbered local picks. UX rules for 2026–2027 computer control. Fable 5.1 low: [consult-fable-jarvis-family.md](consult-fable-jarvis-family.md).
+10. [macOS computer-control tools](macos-computer-control-tools.md): pre-Jev AX as host tools; Jev is the chooser, not the runtime. Fresh-eye: [fresh-eye-review-2026-09-20-tools-first.md](fresh-eye-review-2026-09-20-tools-first.md). Fable 5.1 medium: [consult-fable-tools-first.md](consult-fable-tools-first.md).
 
 ## What to take from each reference
 
@@ -64,6 +65,7 @@ No reference application, speech session, desktop action, or model request was e
 - [Predict outcomes, not steps](jev-outcome-choice.md): Tetris landing vs button. Fable 5.1 medium: [consult-fable-jev-outcome-choice.md](consult-fable-jev-outcome-choice.md).
 - [Avidlive Jev Engineering](avidlive-jev-engineering.md): four-sheet source extraction plus Voice Control mapping. Fable 5.1 medium second review: [consult-fable-avidlive-jev-engineering.md](consult-fable-avidlive-jev-engineering.md).
 - [Accessibility / voice primitives](accessibility-voice-primitives.md): three non-Jev checkouts (`blind.sh`, VoiceCraft, Skales). Fable 5.1 medium: [consult-fable-accessibility-voice-primitives.md](consult-fable-accessibility-voice-primitives.md).
+- [macOS computer-control tools](macos-computer-control-tools.md): pre-Jev AX as host tools. Fresh-eye: [fresh-eye-review-2026-09-20-tools-first.md](fresh-eye-review-2026-09-20-tools-first.md). Fable 5.1 medium: [consult-fable-tools-first.md](consult-fable-tools-first.md).
 - Delegation prompts are preserved under [briefs](briefs/). Reference checkout identities and public permalinks live in each report. The documents stand alone without requiring the ignored local checkout folder.
 
 `/references/` stays gitignored. Local checkouts remain on disk. The DEBUG experiment and decision-machine docs land in this PR; live Flights results and microphone qualification are still unproven.

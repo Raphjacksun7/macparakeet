@@ -61,7 +61,9 @@ Return is not a landing. Escape is how the host dismisses an overlay. Confirm on
 
 ### What stays local
 
-Allowlisted site opens (`role=url` never reaches Jev), running-app activation, exact click / type / replace / scroll / keys, YouTube / Maps / Wikipedia / Google search-box filling, unique Gmail Compose, Flights trip type / origin / destination / date, unique city or calendar match, overlay Escape, Search.
+Allowlisted site opens (`role=url` never reaches Jev), running-app activation, exact **or uniquely named** click / type / replace / scroll / keys, YouTube / Maps / Wikipedia / Google search-box filling, unique Gmail Compose, Flights trip type / origin / destination / date, unique city or calendar match, overlay Escape, Search.
+
+Saying `Save` presses unique Save. `press return` is a key. `click Return` is a button. Repeat type into an already-correct field skips.
 
 `"replace with X"` asks which words to replace; it does not crash on an invalid range.
 
@@ -110,8 +112,8 @@ swift test --filter 'VoiceControl|DictationFlowCoordinator|TransformRunSerialize
 
 | Check | Result |
 | --- | --- |
-| `swift test --filter VoiceControl` (2026-09-20 local, Jarvis + a11y primitives) | **127 tests, 0 failures** |
-| Dictation / Transform admission gate | **182 tests, 0 failures** on the combined filter |
+| `swift test --filter VoiceControl` (2026-09-20 local, tools-first) | **136 tests, 0 failures** |
+| Dictation / Transform admission gate | **191 tests, 0 failures** on the combined filter |
 | Overlay never enables Return; Search omitted from overlay Jev targets | covered |
 | Competing cities are an `outcome` Choice; unique Zürich stays local | covered |
 | Unconstrained Jev omits `key`; YouTube does not infer Return | covered |
@@ -135,4 +137,4 @@ Five earlier synthetic Jev text-only calls took **216–293 ms** (median **238 m
 
 ## Author's Notes
 
-The overlay and results-page fixes reconstruct stalls from fixtures and a recorded session. They are not a second live results run. Numbered picks are a **panel text list**, not Apple “show numbers” overlays. Follow-ups, not merge blockers: replace unconstrained `operation`/`target_*` with outcome kinds on generic pages; live ZRH→LON and mic qualification.
+The overlay and results-page fixes reconstruct stalls from fixtures and a recorded session. They are not a second live results run. Numbered picks are a **panel text list**, not Apple “show numbers” overlays. Native AX tools compile unique names and reserved keys before Jev. Follow-ups, not merge blockers: replace unconstrained `operation`/`target_*` with outcome kinds on generic pages; spoken-tool `.unknown` completion; live ZRH→LON and mic qualification.

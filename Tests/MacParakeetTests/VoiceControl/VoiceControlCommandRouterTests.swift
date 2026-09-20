@@ -51,6 +51,109 @@ final class VoiceControlCommandRouterTests: XCTestCase {
         let result = try await router.decide(goal: "type , please", snapshot: editable("hello"), history: [])
         XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: ", please")))
     }
+    func testBareUniqueLabelPressesWithoutAClickPrefix() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(id: "save", label: "Save", role: "button", operations: [.press]),
+                VoiceControlTarget(id: "open", label: "Open", role: "button", operations: [.press]),
+            ])
+        for goal in ["Save", "the Save button", "Save please"] {
+            let result = try await router.decide(goal: goal, snapshot: snapshot, history: [])
+            XCTAssertEqual(
+                result, .action(VoiceControlAction(operation: .press, targetID: "save")), goal)
+        }
+    }
+
+    func testBareDuplicateLabelOffersNumberedPicks() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(id: "save-a", label: "Save", role: "button", operations: [.press]),
+                VoiceControlTarget(id: "save-b", label: "Save", role: "button", operations: [.press]),
+            ])
+        let result = try await router.decide(goal: "Save", snapshot: snapshot, history: [])
+        guard case .pick(_, _, let ids) = result else {
+            return XCTFail("Bare duplicate names must still be a local numbered pick")
+        }
+        XCTAssertEqual(ids, ["save-a", "save-b"])
+    }
+
+    func testALongGoalDoesNotPressAUniquelyNamedControl() async throws {
+        let fallback = RecordingFallback()
+        let router = VoiceControlCommandRouter(fallback: fallback)
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Notes",
+            targets: [
+                VoiceControlTarget(id: "save", label: "Save", role: "button", operations: [.press]),
+            ])
+        let result = try await router.decide(
+            goal: "Find one-way flights from Zurich to London on September 20 2026.",
+            snapshot: snapshot, history: [])
+        XCTAssertEqual(result, .clarify("fallback"))
+        let seen = await fallback.goals
+        XCTAssertEqual(seen, [
+            "Find one-way flights from Zurich to London on September 20 2026."
+        ])
+    }
+
+    func testPressReturnSendsAKeyEvenWhenAReturnButtonExists() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(
+                    id: "field", label: "Body", role: "text", operations: [.insertText, .key], isFocused: true),
+                VoiceControlTarget(id: "ret", label: "Return", role: "button", operations: [.press]),
+            ])
+        let result = try await router.decide(goal: "press return", snapshot: snapshot, history: [])
+        XCTAssertEqual(
+            result, .action(VoiceControlAction(operation: .key, targetID: "field", value: "return")))
+    }
+
+    func testClickReturnPressesTheButtonNamedReturn() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(
+                    id: "field", label: "Body", role: "text", operations: [.insertText, .key], isFocused: true),
+                VoiceControlTarget(id: "ret", label: "Return", role: "button", operations: [.press]),
+            ])
+        let result = try await router.decide(goal: "click Return", snapshot: snapshot, history: [])
+        XCTAssertEqual(result, .action(VoiceControlAction(operation: .press, targetID: "ret")))
+    }
+
+    func testClickSearchMatchesAUniquePrefixedLabel() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(id: "go", label: "Search flights", role: "button", operations: [.press]),
+                VoiceControlTarget(id: "filter", label: "Filters", role: "button", operations: [.press]),
+            ])
+        let result = try await router.decide(goal: "click Search", snapshot: snapshot, history: [])
+        XCTAssertEqual(result, .action(VoiceControlAction(operation: .press, targetID: "go")))
+    }
+
+    func testTypeSkipsWhenTheFocusedFieldAlreadyHoldsTheText() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let result = try await router.decide(goal: "type hello", snapshot: editable("hello"), history: [])
+        guard case .information(let message) = result else {
+            return XCTFail("Refilling an already-correct field must not insert again")
+        }
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("already"))
+    }
+
+    func testTypeWithASelectionDoesNotSkipAsAlreadyHeld() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let result = try await router.decide(
+            goal: "type hello", snapshot: editable("hello", selected: "hello"), history: [])
+        XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: "hello")))
+    }
+
     func testAmbiguousClickOffersNumberedPicksBoundToTargetIDs() async throws {
         let router = VoiceControlCommandRouter(fallback: MustNotDecide())
         let snapshot = VoiceControlSnapshot(
