@@ -35,7 +35,8 @@ flowchart TD
 
 ## Test evidence
 
-- [x] `swift test --filter VoiceControl` — **110 tests, zero failures** (2026-09-20 local), including overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search, picker landings without a Flights parse, and `replace with X` no longer building an invalid range
+- [x] `swift test --filter VoiceControl` — **113 tests, zero failures** (2026-09-20 local), including overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search, picker landings without a Flights parse, results-page airport names staying plain so Search can run, and `replace with X` no longer building an invalid range
+- [x] `swift test --filter 'VoiceControl|DictationFlowCoordinator|TransformRunSerializer'` — **168 tests, zero failures** (2026-09-20 local)
 - [x] Hosted CI `swift-test` succeeded on the previous native-AX commits of this PR
 - [ ] Rebuild Dev app and typed inbox Flights goal to a **results list**
 - [ ] Integrated hold-to-talk microphone path

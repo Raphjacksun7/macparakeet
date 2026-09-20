@@ -513,6 +513,42 @@ final class VoiceControlCommandRouterTests: XCTestCase {
                     consequence: .ordinary)))
     }
 
+    func testFlightPlanPressesSearchWhenThePageListsAirports() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "from", label: "Where from?", role: "AXComboBox", value: "Zurich",
+                    operations: [.setValue, .press, .key]),
+                VoiceControlTarget(
+                    id: "to", label: "Where to?", role: "AXComboBox", value: "London",
+                    operations: [.setValue, .press]),
+                VoiceControlTarget(
+                    id: "date", label: "Departure", role: "AXTextField", value: "September 20 2026",
+                    operations: [.setValue, .press]),
+                VoiceControlTarget(
+                    id: "search", label: "Search flights", role: "AXButton", operations: [.press]),
+                VoiceControlTarget(
+                    id: "r0", label: "Zurich Airport (ZRH)", role: "AXStaticText", operations: [.press]),
+            ])
+        let result = try await router.decide(
+            goal: "Find one-way flights from Zurich to London on September 20 2026.", snapshot: snapshot,
+            history: [
+                VoiceControlAction(
+                    operation: .press, targetID: "web:google-flights", receiptStatus: .transitionObserved),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "from", value: "Zurich", receiptStatus: .verified),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "to", value: "London", receiptStatus: .verified),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "date", value: "September 20 2026", receiptStatus: .verified),
+            ])
+        XCTAssertEqual(
+            result,
+            .action(VoiceControlAction(operation: .press, targetID: "search", consequence: .ordinary)))
+    }
+
     func testYouTubeQueryFillsTheSearchBox() async throws {
         let router = VoiceControlCommandRouter(fallback: MustNotDecide())
         let snapshot = VoiceControlSnapshot(

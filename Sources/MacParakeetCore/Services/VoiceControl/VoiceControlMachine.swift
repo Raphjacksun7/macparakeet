@@ -8,14 +8,16 @@ public enum VoiceControlSituation: String, Sendable, Equatable {
 
     public static func classify(_ snapshot: VoiceControlSnapshot) -> VoiceControlSituation {
         if snapshot.targets.contains(where: VoiceControlLegality.isCalendarDay) { return .datePicker }
-        if snapshot.targets.contains(where: VoiceControlLegality.isCitySuggestion) { return .suggestionPicker }
-        let whereElse = snapshot.targets.contains {
+        let cities = snapshot.targets.filter(VoiceControlLegality.isCitySuggestion)
+        if cities.contains(where: \.isFocused) { return .suggestionPicker }
+        let overlayChrome = snapshot.targets.contains {
             $0.label.localizedStandardContains("Where else")
         }
+        if !cities.isEmpty && overlayChrome { return .suggestionPicker }
         let focusedChoice = snapshot.targets.contains {
             $0.isFocused && $0.operations.contains(.press) && $0.role == "AXStaticText"
         }
-        if whereElse && focusedChoice { return .suggestionPicker }
+        if overlayChrome && focusedChoice { return .suggestionPicker }
         return .plain
     }
 }

@@ -12,6 +12,48 @@ final class VoiceControlMachineTests: XCTestCase {
         XCTAssertFalse(pressIDs.contains("search"))
     }
 
+    func testFlightResultsWithAirportNamesAreNotASuggestionPicker() {
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "from", label: "Where from?", role: "AXComboBox", value: "Zurich",
+                    operations: [.setValue, .press, .key]),
+                VoiceControlTarget(
+                    id: "to", label: "Where to?", role: "AXComboBox", value: "London",
+                    operations: [.setValue, .press]),
+                VoiceControlTarget(
+                    id: "search", label: "Search flights", role: "AXButton", operations: [.press]),
+                VoiceControlTarget(
+                    id: "r0", label: "Zurich Airport (ZRH)", role: "AXStaticText", operations: [.press]),
+                VoiceControlTarget(
+                    id: "r1", label: "London, United Kingdom", role: "AXStaticText", operations: [.press]),
+            ])
+        XCTAssertEqual(VoiceControlSituation.classify(snapshot), .plain)
+        XCTAssertTrue(VoiceControlLegality.offeredKeys(in: snapshot).contains("return"))
+        XCTAssertTrue(VoiceControlLegality.offeredTargets(in: snapshot).contains(where: { $0.id == "search" }))
+        XCTAssertNil(VoiceControlOutcomes.competingLandings(in: snapshot, goal: "Find flights to London"))
+    }
+
+    func testDatePickerDoesNotEnableReturn() {
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "day20",
+                    label: "Sunday, September 20, 2026, departure date. , 276 US dollars",
+                    role: "AXButton", operations: [.press]),
+                VoiceControlTarget(
+                    id: "from", label: "Where from?", role: "AXComboBox", value: "Zurich",
+                    operations: [.setValue, .press, .key], isFocused: true),
+                VoiceControlTarget(
+                    id: "search", label: "Search flights", role: "AXButton", operations: [.press]),
+            ])
+        XCTAssertEqual(VoiceControlSituation.classify(snapshot), .datePicker)
+        XCTAssertFalse(VoiceControlLegality.offeredKeys(in: snapshot).contains("return"))
+        XCTAssertFalse(VoiceControlLegality.offeredTargets(in: snapshot).contains(where: { $0.id == "search" }))
+    }
+
     func testPlainFormStillOffersReturn() {
         let snapshot = VoiceControlSnapshot(
             contextID: "test", applicationName: "Google Chrome",

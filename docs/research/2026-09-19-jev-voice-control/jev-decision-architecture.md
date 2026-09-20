@@ -53,6 +53,6 @@ Repeated, labelable decisions. Unique steps stay local.
 
 ## Verification
 
-`swift test --filter VoiceControl` — **110 tests, 0 failures** (2026-09-20). Includes overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search, picker landings without a Flights parse, and `replace with X` no longer building an invalid string range.
+`swift test --filter VoiceControl` — **113 tests, 0 failures** (2026-09-20). Includes overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search, picker landings without a Flights parse, results-page airport names staying `.plain` so Search can run, date-picker Return exclusion, and `replace with X` no longer building an invalid string range.
 
 Live Flights-to-results and microphone qualification remain open. This architecture makes the recorded overlay stall **illegal** (Return is not enabled) instead of hoping Jev will not pick it.
