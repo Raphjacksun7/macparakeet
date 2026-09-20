@@ -2,44 +2,137 @@
 
 ## Summary
 
-Adds an explicitly enabled Voice Control experiment: hold Control–Option–Space (or type an inbox command) and let native macOS Accessibility drive the app already in front of you, including the user’s existing browser. No required extension, CDP, or special browser profile.
+This PR adds a DEBUG-only Voice Control experiment to MacParakeet: ordinary speech or a typed inbox command drives the app already in front of you through native macOS Accessibility. Jev is the judge of competing landings. MacParakeet owns observation, legality, execution, and verification.
 
-Unique next steps stay local. When several events are legal — competing city suggestions — Jev makes one Choice among those ids. Return is not enabled while a suggestion or date picker is open. Confirm only pay, delete, or send.
+It is not a stable-release claim. Live Google Flights results and the integrated microphone are still unproven. Enable with `--enable-voice-control` in a DEBUG build.
 
-This is a DEBUG-only developer experiment (`--enable-voice-control`). It is not a stable-release claim. Live ZRH→LON results and the integrated microphone are still unproven.
+---
 
-## Design
+## What Jev is
 
-Governing decisions: [ADR-033](spec/adr/033-explicit-voice-control.md), [native Accessibility direction](docs/research/2026-09-19-jev-voice-control/native-accessibility-direction.md), [contract](spec/contracts/voice-control.md), [decision architecture](docs/research/2026-09-19-jev-voice-control/jev-decision-architecture.md).
+Jev (TypeSafe, pinned here at `jev-1.13.0`) is **System One judgment**, not an agent. It does not browse. It does not write AppleScript, JavaScript, or selectors. It does not prove that a task finished.
 
-Jev Ultrafast’s Flights demo is CDP. We keep its policy (code-owned URLs/values, consume-once, no retry of uncertain mutations) and execute through native AX. Independent consults (GPT-6 Astra, Fable 5.1, Avidlive Jev Engineering) settled: host owns legality; Jev is a judge, not a planner.
+One request is `state` plus named `questions`. The questions share that state, run **independently**, and cannot read each other’s answers. The primitive that matters for us is **Choice**: a closed map of options, each with criteria, returning a distribution and a confidence. Confidence is concentration of that distribution, not P(the user’s goal succeeded).
+
+Jev is strong at picking among named options given evidence. It is weak at arithmetic, dates, counting, generation, huge irrelevant trees, and **simulating a multi-step transition function**. That last weakness is the whole product question.
+
+A practitioner put it cleanly: *predict outcomes, not steps toward an outcome.* Tetris makes the granularity obvious:
+
+| Ask Jev | What you are really asking |
+| --- | --- |
+| “Play Tetris” | Plan and execute. This fails. |
+| “Which button to press” | The next micro-step. Better, still a simulation. |
+| “Where should this piece land” | An observed landing. The host compiles left/rotate/drop. |
+| “Should you win or lose” | A receipt. If we could compile any goal to that predicate, we would not need the model. |
+
+The unsolved “tree where one outcome changes the next” is not a Jev feature. Execute one compiled landing, re-observe, offer a new independent Choice. The graph lives in the host.
+
+Independent consults on this split: [GPT-6 Astra](docs/research/2026-09-19-jev-voice-control/consult-gpt6-astra-jev-architecture.md), [Fable 5.1 architecture](docs/research/2026-09-19-jev-voice-control/consult-fable-jev-architecture.md), [Avidlive Jev Engineering](docs/research/2026-09-19-jev-voice-control/avidlive-jev-engineering.md) with [Fable medium](docs/research/2026-09-19-jev-voice-control/consult-fable-avidlive-jev-engineering.md), and the Tetris note with [Fable medium](docs/research/2026-09-19-jev-voice-control/consult-fable-jev-outcome-choice.md). Canonical write-up: [decision architecture](docs/research/2026-09-19-jev-voice-control/jev-decision-architecture.md) and [predict outcomes](docs/research/2026-09-19-jev-voice-control/jev-outcome-choice.md).
+
+What we refused to build: a seven-state universal Mac graph, Score-ranking every widget, a generative worker in the click loop, CDP, or asking Jev whether we “won.”
+
+---
+
+## How MacParakeet uses it
+
+Voice Control is a deliberate mode, not always-on listening. Hold Control–Option–Space or type in the inbox. Ordinary dictation keeps its current meaning. Speech stays local. Jev is cloud text-only, explicit consent, BYO key in Keychain.
+
+**Observation and effects are native Accessibility** on the user’s existing apps and browser. No required extension, no Chrome DevTools Protocol, no special profile. An optional connected-tab DOM adapter may supply page candidates later; AX remains the fallback and the Flights acceptance path. Browser chrome (tabs, URL bar) stays AX either way.
+
+Jev Ultrafast’s Flights demo is CDP: it owns a tab, keeps DOM nodes, clicks `[role=option]`. We keep its *policy* — code-owned URLs and values, consume a decision once, do not retry an uncertain mutation — and throw away the transport.
+
+The host does this every turn:
 
 ```mermaid
 flowchart TD
-  observe[Observe AX] --> situation{Situation}
+  observe[Observe Accessibility] --> situation{Situation}
   situation --> events[Enabled events]
   events -->|one| local[Execute locally]
-  events -->|several| jev[Jev Choice among those ids]
+  events -->|several| jev["Jev outcome Choice"]
   events -->|none| unconstrained[Jev among legality-filtered controls]
-  local --> verify[Execute once and verify]
+  local --> verify[Execute once · verify on a fresh snapshot]
   jev --> verify
   unconstrained --> verify
 ```
 
+`VoiceControlSituation` is recomputed from the snapshot: `plain`, `suggestionPicker`, or `datePicker`. Code lists **legal events**. Unique events skip the model. Several become one Jev `outcome` Choice over those ids, plus `insufficient_evidence` / `clarify`. Zero (no domain machine) is unconstrained Jev on legality-filtered page controls — still not allowed to pick Return or Search while a picker is open.
+
+Return is not a landing. Escape is how the host dismisses an overlay. Confirm only pay, delete, or send. `finished` from Jev is never a receipt.
+
+### What stays local
+
+Allowlisted site opens (`role=url` never reaches Jev), running-app activation, exact click / type / replace / scroll / keys, YouTube / Maps / Wikipedia / Google search-box filling, unique Gmail Compose, Flights trip type / origin / destination / date, unique city or calendar match, overlay Escape, Search.
+
+`"replace with X"` asks which words to replace; it does not crash on an invalid range.
+
+### What Jev decides
+
+Competing unfocused city rows — London, United Kingdom vs London, Ontario — are landings: *after the host acts, this label is the selected result.* Unique `Zürich` vs typed `Zurich` stays local. Generic footer links are not landings; their post-state is unknown.
+
+The unconstrained leftover still asks operation / target / key. That is the Tetris “which button” rung. It is a documented hole, not pretended away.
+
+### Google Flights, honestly
+
+Typed goal: `Find one-way flights from Zurich to London on September 20 2026.`
+
+A live turn opened Flights, filled Zurich/London/date, committed the Zürich suggestion, then stalled: Return ran while the origin overlay was still open (`duplicate_blocked`). The machine now classifies that overlay as `suggestionPicker` and **does not enable Return**. A second stall class — airport names on a results-like page classified as the overlay, which hid Search — is also illegal: overlay detection requires a focused suggestion or `Where else?` chrome.
+
+**ZRH→LON results have not been demonstrated.** The architecture makes those stalls illegal instead of hoping Jev will avoid them.
+
+Interactive walkthrough: [walkthrough.html](https://github.com/moona3k/macparakeet/blob/feat/jev-voice-control/docs/research/2026-09-19-jev-voice-control/walkthrough.html).
+
+### Privacy and traces
+
+Speech never leaves the Mac for Jev. The request is the goal plus bounded visible control text, after consent. Selected text is redacted from the Jev wire; writing uses a separate provider. Field values, audio, screenshots, and remote response bodies stay out of shareable diagnostics. Local `latest.md` may include the instruction and labels so a turn can be debugged; Copy diagnostics strips them.
+
+Stop revokes in-flight authority. Manual mouse/keyboard pauses automation; Continue reobserves. Unknown effects do not retry.
+
+Governing spec: [ADR-033](spec/adr/033-explicit-voice-control.md), [contract](spec/contracts/voice-control.md), [native Accessibility direction](docs/research/2026-09-19-jev-voice-control/native-accessibility-direction.md).
+
+---
+
 ## Risk surface
 
-- Foreground AX mutation races with dictation/Transforms (existing `GUIMutationArbiter`).
-- Privacy: local traces include labels; shareable copy must not. Review `VoiceControlTraceRecord.shareable()`.
-- Situation classifiers are Flights-shaped (`comma`/`Airport` cities, `departure date` days). Explicit “press return” still routes locally.
+- Foreground AX mutation races with dictation and Transforms (`GUIMutationArbiter`).
+- Situation heuristics are still Flights-shaped. Explicit “press return” still routes locally.
+- Duplicate-effect protection can stall a turn that needs a *different* dismissal if the snapshot does not change.
+- `postcondition.holds` is tested and not yet wired into the turn runner; receipts still come from the adapter.
 - Out of scope: TTS, Jev CLI, numbered overlays, OCR, autonomous send/book, stable DMG enablement.
+
+---
 
 ## Test evidence
 
-- [x] `swift test --filter VoiceControl` — **113 tests, zero failures** (2026-09-20 local), including overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search, picker landings without a Flights parse, results-page airport names staying plain so Search can run, and `replace with X` no longer building an invalid range
-- [x] `swift test --filter 'VoiceControl|DictationFlowCoordinator|TransformRunSerializer'` — **168 tests, zero failures** (2026-09-20 local)
-- [x] Hosted CI `swift-test` succeeded on the previous native-AX commits of this PR
-- [ ] Rebuild Dev app and typed inbox Flights goal to a **results list**
-- [ ] Integrated hold-to-talk microphone path
-- [ ] Full Swift suite once, as the final merge gate
+```
+swift test --filter VoiceControl
+swift test --filter 'VoiceControl|DictationFlowCoordinator|TransformRunSerializer'
+```
 
-Walkthrough: [walkthrough.html](docs/research/2026-09-19-jev-voice-control/walkthrough.html). Findings: [findings-2026-09-20.md](docs/research/2026-09-19-jev-voice-control/findings-2026-09-20.md).
+| Check | Result |
+| --- | --- |
+| `swift test --filter VoiceControl` (2026-09-20 local, `aae51715`) | **113 tests, 0 failures** |
+| Dictation / Transform admission gate | **168 tests, 0 failures** on the combined filter |
+| Overlay never enables Return; Search omitted from overlay Jev targets | covered |
+| Competing cities are an `outcome` Choice; unique Zürich stays local | covered |
+| Outcome-only Jev payload (no unconstrained `operation` / `key` heads) | covered |
+| Results-page airport names stay `.plain` so Search can run | covered |
+| Date picker does not enable Return | covered |
+| `"replace with X"` clarifies instead of an invalid string range | covered |
+| Shareable traces omit labels; Jev wire omits `selectedText` | covered |
+| Hosted CI `swift-test` on earlier commits | succeeded ([run](https://github.com/moona3k/macparakeet/actions/runs/35494449095/job/106034862243)) |
+| Hosted CI on `aae51715` | pending |
+| Live Flights **results list** | not done |
+| Integrated microphone | not done |
+| Full Swift suite | not run; once, as the final merge gate |
+
+Five earlier synthetic Jev text-only calls took **216–293 ms** (median **238 ms**). That excludes speech, Accessibility, and verification. No p95 voice-to-action claim.
+
+[Findings](docs/research/2026-09-19-jev-voice-control/findings-2026-09-20.md) · [testing handoff](docs/research/2026-09-19-jev-voice-control/testing-handoff.md) · [capability matrix](docs/research/2026-09-19-jev-voice-control/release-scope.md)
+
+---
+
+## Author's Notes
+
+The overlay and results-page fixes reconstruct stalls from fixtures and a recorded session. They are not a second live results run. A parallel checkout at `macparakeet-jev-pr` (`feat/jev-native-voice-control`) is an older `b6aabd10` snapshot and is not this PR.
+
+Follow-ups, not merge blockers: replace unconstrained `operation`/`key` with outcome kinds; wire `postcondition.holds` into the runner; live ZRH→LON and mic qualification.
