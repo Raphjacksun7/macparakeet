@@ -124,3 +124,11 @@ If possible, record a real-time native Google Flights demo including the utteran
 5. Prepare and push a high-quality PR with honest scope, validation, limitations, and native demo evidence; pass remote checks. No PR has been opened or pushed at this handoff. Merge and stable release are separate from implementation and qualification.
 
 The core feature is substantial and implemented in the working tree; it is not yet a qualified full release. The immediate blocker is completing and demonstrating the actual native Google Flights loop, followed by integrated speech qualification and final review.
+
+### PR validation isolation (18:50 local)
+
+Implementation checkpoint `b6aabd10` passed 122 focused tests. PR validation is running from `/Users/dmoon/code/macparakeet-jev-pr`, branch `feat/jev-native-voice-control`, based on that checkpoint. The testing checkout remains `feat/jev-voice-control`; its newly added `AXFlightsProbe.swift` and `run_ax_flights_probe.py` were deliberately left uncommitted for the testing agent. Do not assume the PR validation checkout includes later qualification fixes. Send those fixes/evidence back for explicit integration after the gate; do not rebase or reset the testing checkout to follow the gate.
+
+### Local implementation status
+
+See [implementation-status.md](implementation-status.md) for the complete 19:13 PDT checkpoint, review fixes, active gate/run identity, separate branch ownership, verification limits, and ordered integration steps. Refresh the active gate status: it may advance after this document snapshot.
