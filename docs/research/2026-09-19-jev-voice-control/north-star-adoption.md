@@ -20,6 +20,8 @@
 | Strict choice validation (offered IDs, probability keys, argmax, sum≈1) | `jev-ultrafast` `validate_choice` | already in `JevDecisionClient.validate` |
 | Confirm only pay / delete / send | product rule; reject macbrow’s save/create/edit list | `VoiceControlConsequencePolicy` |
 | Fail-open: malformed Jev answer executes nothing | `hermes-jev-skills`, `jev-ultrafast` | `JevDecisionError.invalidResponse` |
+| Isolated typing-session grammar, filler-word-proof confirmation, joinable type utterances | VoiceCraft modes, blind.sh default-No, Skales card copy (always-allow refused); Fable 5.1 amendments | `VoiceControlSessionGrammar`, `VoiceControlConfirmationCopy`, router type-join |
+| Numbered local disambiguation bound to snapshot IDs | Apple Voice Control / Rango / Jarvis “which one”; OpenJarvis capability floor as philosophy | `VoiceControlSpokenPick`, `VoiceControlDecision.pick` |
 
 ## Explicitly not adopted
 
@@ -27,4 +29,4 @@ CDP, Chrome extension, automation browser, screenshot-to-cloud, generated AppleS
 
 ## Next high-leverage items (not this pass unless traces demand them)
 
-Semantic freshness guards (`jev-ultrafast` pageKey), third-hand re-match after model latency, numbered local disambiguation (`jev-voice-browser`), two-gate speech commitment for free-text payloads, batched AX reads. Each is 40–120 lines; none is required to keep the everyday local routes working.
+Semantic freshness guards (`jev-ultrafast` pageKey), third-hand re-match after model latency, numbered *on-screen* overlays (Apple “show numbers”; panel text list already ships), two-gate speech commitment for free-text payloads, batched AX reads. Each is 40–120 lines; none is required to keep the everyday local routes working.

@@ -15,8 +15,8 @@ It is **not** a new planner, and it does **not** solve “win the whole task” 
 | Ask Jev | Voice Control |
 | --- | --- |
 | “Play Tetris” / “Find flights” as an agent loop | Host machine + unique local steps. Jev never owns the plan. |
-| “Which button” | Unconstrained leftover: `operation` + `target_*` + `key`. Still a hole. |
-| “Where should this piece land” | Competing city/date picker rows: one `outcome` Choice. Unique Zürich is local. Return is not a landing. |
+| “Which button” | Unconstrained leftover: `operation` + `target_*` only. Keystrokes are host-owned (`press return` / `press escape`). Still a hole for unlabeled generic pages. |
+| “Where should this piece land” | Competing city/date picker rows: one `outcome` Choice. Unique Zürich is local and carries `.selectedLabel`. Return is not a landing. |
 | “Win or lose” | Refused. That is a receipt. `finished` is never independent evidence. |
 
 The author’s unsolved tree (one outcome changes the next) is **not** a Jev problem. Re-observe after one compiled outcome; the next frame is a new independent Choice. Missing pieces are host bookkeeping (satisfied slots, undo as a landing, history of verified post-conditions), not lookahead.
@@ -27,13 +27,14 @@ The author’s unsolved tree (one outcome changes the next) is **not** a Jev pro
 - `VoiceControlEnabledEvent` carries a `postcondition`. City/date picker landings use `.selectedLabel`. `.unknown` means “step in disguise” and is not offered as a picker landing.
 - `VoiceControlOutcomes.competingLandings` only fires on `suggestionPicker` / `datePicker`. Generic footer links are **not** landings (Fable: unknown post-state).
 - Wire `kind: outcome` on the event-choice request body.
+- `VoiceControlTurnRunner` checks `postcondition.holds` on the next snapshot and promotes `transitionObserved` / `unknown` to `verified` when it does.
+- Unconstrained Jev no longer offers `key`. Explicit “press return” / “press escape” stay local.
 
 ## What we refused (this pass)
 
 - “Should you win” as a Jev question.
 - Compiling the whole Flights instruction into one Choice.
-- Replacing unconstrained `operation`/`key` in the same change (documented hole; do not pretend a link press is a Tetris landing).
-- Wiring `postcondition.holds` into `VoiceControlTurnRunner` yet. The helper exists and is tested; the runner still uses adapter receipts. That is the remaining half of Fable’s amendment.
+- Replacing unconstrained `operation`/`target_*` on generic pages (documented leftover; do not pretend a footer link is a Tetris landing).
 
 ## Verification
 

@@ -222,7 +222,7 @@ public enum VoiceControlConsequencePolicy {
         let words = Set(label.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
         let shortLabel = words.count <= 5
         // Reviewed local evidence always wins over model-proposed ordinary risk.
-        if shortLabel, !words.isDisjoint(with: ["pay", "purchase", "checkout", "buy", "payment", "subscribe"]) {
+        if shortLabel, !words.isDisjoint(with: ["pay", "purchase", "checkout", "buy", "payment", "subscribe", "order", "booking"]) {
             return .payment
         }
         if shortLabel, !words.isDisjoint(with: ["delete", "erase", "trash", "destroy"]) { return .destructive }

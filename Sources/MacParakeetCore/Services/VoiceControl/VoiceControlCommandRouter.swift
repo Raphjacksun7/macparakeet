@@ -45,7 +45,13 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         }
         for prefix in ["type the words ", "type literally ", "type "] where lower.hasPrefix(prefix) {
             guard focused.count == 1 else { return .clarify("Focus one editable field before typing.") }
-            let payload = String(command.dropFirst(prefix.count))
+            var payload = String(command.dropFirst(prefix.count))
+            if (focused[0].selectedText ?? "").isEmpty,
+                let value = focused[0].value, let last = value.last, !last.isWhitespace,
+                let first = payload.first, first.isLetter || first.isNumber
+            {
+                payload = " " + payload
+            }
             guard !payload.isEmpty, payload.utf16.count <= 32_000 else {
                 return .clarify("Say the text to enter, up to 32,000 characters.")
             }
@@ -96,6 +102,12 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
                     VoiceControlAction(
                         operation: matches[0].operations.contains(.activateApp) ? .activateApp : .press,
                         targetID: matches[0].id))
+            }
+            if matches.count > 1, matches.count <= 6 {
+                let labels = VoiceControlSpokenPick.displayLabels(matches)
+                return .pick(
+                    prompt: VoiceControlSpokenPick.prompt(labels: labels), labels: labels,
+                    targetIDs: matches.map(\.id))
             }
             if matches.count > 1 { return .clarify("More than one control is named \(label). Describe which one.") }
         }
@@ -256,6 +268,7 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         for target in pressable.prefix(3) { lines.append("• Click \(target.label)") }
         if snapshot.targets.filter({ $0.isFocused && $0.operations.contains(.insertText) }).count == 1 {
             lines.append("• Type hello — inserts your exact words into the focused field")
+            lines.append("• Typing mode — keep inserting until you say command mode or stop typing")
             if snapshot.targets.contains(where: {
                 $0.isFocused && $0.operations.contains(.setValue) && $0.valueIsComplete
             }) {
@@ -279,6 +292,7 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
                 "No supported direct controls are currently available. Focus an editable field or another app.")
         }
         if !snapshot.isComplete { lines.append("Only part of this interface was observed.") }
+        lines.append("If several controls match, say the number.")
         lines.append(
             "Say Stop to pause, or End Voice Control to end the session. Only pay, delete, or send asks for confirmation.")
         return lines.joined(separator: "\n")

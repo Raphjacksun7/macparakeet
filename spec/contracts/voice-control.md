@@ -235,8 +235,8 @@ autocomplete, overlay Escape, Search). Competing overlay suggestions become
 enabled events for one Jev Choice; Return is not enabled while a suggestion
 or date picker is open. Jev is never offered `role=url`
 destinations. Literal mode treats utterances as text; isolated
-`command mode` exits and `command stop` pauses. `type literally command mode`
-enters those words. Prefix handling must preserve the payload rather than
+`command mode` / `stop typing` exits and `command stop` pauses. Isolated utterances `typing mode`, `start typing`, `activate type`, `type mode`, `literal mode`, and `dictation mode` enter. `type literally command mode`
+enters those words. While a pay, delete, or send confirmation is pending, only isolated `yes` / `confirm` / `confirm this action` authorize; `ok` and `okay` do not. Isolated `no` / `cancel` / `cancel task` decline. Consecutive typed insertions join with a space when appending at the caret. Ambiguous visible names become a numbered local pick (`1` / `two` / `the second one`); `the other one` is not option 1. Prefix handling must preserve the payload rather than
 shortening or stripping arbitrary fillers. Selected-text rewriting uses the
 explicitly enabled writing provider and previews the generated action for
 confirmation.

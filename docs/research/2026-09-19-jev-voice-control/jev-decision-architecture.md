@@ -12,8 +12,9 @@ Observe (AX, or DOM if the tab is connected)
     → Enabled events (code)
       → |events| == 1  → execute locally
       → |events|  > 1  → one Jev Choice over those event ids
-      → |events| == 0  → unconstrained Jev on legality-filtered targets
+      → |events| == 0  → unconstrained Jev on legality-filtered targets (no keystrokes)
         → host policy → execute once → verify on a fresh snapshot
+          (declared postcondition, if any, can promote the receipt)
 ```
 
 Jev is a judge, not a worker and not a completion oracle. `finished` is never a receipt. Return is **not** an enabled key while a suggestion or date picker is open. Competing picker rows are **outcomes** (where the piece lands), not keystrokes. See [jev-outcome-choice.md](jev-outcome-choice.md).
@@ -49,10 +50,10 @@ Repeated, labelable decisions. Unique steps stay local.
 | YouTube / Maps / Wikipedia / web search box | yes | unfamiliar in-page follow-up |
 | Gmail Compose | unique Compose | — |
 | Pay / delete / send | — | never auto; confirm |
-| Generic unknown page | — | legality-filtered operation+target heads |
+| Generic unknown page | — | legality-filtered `operation` + `target_*` (no `key`) |
 
 ## Verification
 
-`swift test --filter VoiceControl` — **113 tests, 0 failures** (2026-09-20). Includes overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search, picker landings without a Flights parse, results-page airport names staying `.plain` so Search can run, date-picker Return exclusion, and `replace with X` no longer building an invalid string range.
+`swift test --filter VoiceControl` — **117 tests, 0 failures** (2026-09-20). Includes overlay Return exclusion, competing-city outcomes, unique Zürich local press, outcome-only Jev payload, unconstrained overlay omitting Return/Search/**key**, picker landings without a Flights parse, results-page airport names staying `.plain` so Search can run, date-picker Return exclusion, YouTube not inferring Return, label-stable field history after AX ID refresh, stale-ID rematch, and `postcondition.holds` promoting a transition receipt.
 
 Live Flights-to-results and microphone qualification remain open. This architecture makes the recorded overlay stall **illegal** (Return is not enabled) instead of hoping Jev will not pick it.

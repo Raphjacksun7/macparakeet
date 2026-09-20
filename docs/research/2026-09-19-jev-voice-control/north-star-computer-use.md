@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-19. **Status:** research synthesis. No implementation, no measurements, no API calls were made for this document.
 
-**Sources:** the twelve reference checkouts under `/Users/dmoon/code/macparakeet/references/`, read in place and not modified. Existing product constraints come from [`native-accessibility-direction.md`](native-accessibility-direction.md), [`routing-catalog.md`](routing-catalog.md), [`tts-and-jev-cli-later.md`](tts-and-jev-cli-later.md), and [`local-tts-and-jev-cli.md`](local-tts-and-jev-cli.md).
+**Sources:** the nineteen gitignored checkouts under `/Users/dmoon/code/macparakeet/references/`, read in place and not modified. Jev and computer-use folders are extracted in §2.1–2.11. Non-Jev voice/assistant demos (`blind.sh`, VoiceCraft, Skales, Jarvis family, OpenJarvis) live in [accessibility-voice-primitives.md](accessibility-voice-primitives.md) and [jarvis-family-primitives.md](jarvis-family-primitives.md). Existing product constraints come from [`native-accessibility-direction.md`](native-accessibility-direction.md), [`routing-catalog.md`](routing-catalog.md), [`tts-and-jev-cli-later.md`](tts-and-jev-cli-later.md), and [`local-tts-and-jev-cli.md`](local-tts-and-jev-cli.md).
 
 **Caveat carried throughout:** every measurement quoted below is the reference project's own claim about its own runtime, on its own machine, on one or two websites. None of it is evidence about MacParakeet. In particular, this document does not assert that MacParakeet has shipped a working Google Flights run or a qualified microphone path; `Sources/MacParakeetCore/Services/VoiceControl/VoiceControlFlightPlan.swift` exists as code, which is not the same as a demonstrated end-to-end result.
 
@@ -179,6 +179,15 @@ Not a computer-use reference. An **operations** reference.
 - **`wassgha__opendex__README.md`** is the product shape we are deliberately *not* building: wake word, personality, themes, cinematic HUD, pluggable cloud STT/TTS, ElevenLabs, and computer-use as screenshot + `nut.js` mouse/keyboard behind a permission gate (`:54`, `:113`). Two things to keep: the per-skill permission memory (Allow once / Always / Never, `:111`) is a reasonable pattern for app/domain exclusions, and the setup honesty at `:113` — without Screen Recording and Accessibility, "screenshots come back blank and clicks do nothing" — is a reminder to make permission state explicit.
 - **`trycua__cua__README.md`** is infrastructure (cloud desktops, VMs, benchmarks), almost all out of scope. Two relevant notes: CUA-S1 is a small "System 1" model for bounded interface decisions where "Application code orders the actions" (`:117`) — independent convergence on the same architecture from a different vendor. And `cua-bench` (`:141-152`) is a reminder that a task + reference solution + evaluator returning a reward is how you'd actually measure a use-case catalog, versus counting model-choice accuracy.
 - **The TypeSafe docs snapshots** (`patterns__fan-out.md`, `cookbooks__function_calling.md`, `cookbooks__pre_parsed_value_extraction_cookbook.md`, `confidence.md`, `concepts__state.md`, `models.md`, `api.md`) are the primary sources already cited throughout `routing-catalog.md`. Nothing new to add; they remain the authority for the 255-option limit, fan-out independence, and the confidence-vs-correctness distinction.
+
+### 2.12 Non-Jev assistant and accessibility checkouts (2026-09-20)
+
+These folders are demos or frameworks, not Jev computer-use. They do not change §1 constraints. Deep extracts:
+
+| Folder | Note |
+|---|---|
+| `blind.sh`, `VoiceCraft`, `skales` | Modes, confirmation copy, traps. [accessibility-voice-primitives.md](accessibility-voice-primitives.md). |
+| `J.A.R.V.I.S`, `Jarvis`, `Jarvis-Desktop-Voice-Assistant`, `OpenJarvis` | Intent-capture UX; mostly negative examples plus numbered local picks and a capability floor. [jarvis-family-primitives.md](jarvis-family-primitives.md). |
 
 ---
 

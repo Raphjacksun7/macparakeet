@@ -59,7 +59,7 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
                         .caseInsensitiveCompare("One way") == .orderedSame
             }),
                 !history.contains(where: {
-                    $0.targetID == oneWayControl.id
+                    $0.referring(to: oneWayControl)
                         && ($0.receiptStatus == .verified || $0.receiptStatus == .transitionObserved)
                 })
             {
@@ -70,7 +70,9 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
             !alreadyPressed(option.label, history: history),
             !isStaleOriginSuggestion(option, history: history)
         {
-            return ordinary(.press, option.id, label: option.label)
+            return VoiceControlAction(
+                operation: .press, targetID: option.id, targetLabel: option.label, consequence: .ordinary,
+                postcondition: .selectedLabel(option.label))
         }
         if let origin, let field = field(in: snapshot, matching: ["where from"]),
             needs(field, expected: origin, history: history), field.operations.contains(.setValue)
@@ -101,7 +103,7 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
         if let overlay = dismissOverlay(snapshot, history: history) { return overlay }
         if let search = snapshot.targets.first(where: Self.isSearchControl),
             !history.contains(where: {
-                $0.targetID == search.id && $0.receiptStatus == .transitionObserved
+                $0.referring(to: search) && $0.receiptStatus == .transitionObserved
             })
         {
             return ordinary(.press, search.id)
@@ -223,7 +225,9 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
         guard let focused = snapshot.targets.first(where: { $0.isFocused && $0.operations.contains(.key) }) else {
             return nil
         }
-        return VoiceControlAction(operation: .key, targetID: focused.id, value: "escape", consequence: .ordinary)
+        return VoiceControlAction(
+            operation: .key, targetID: focused.id, value: "escape", targetLabel: focused.label,
+            consequence: .ordinary)
     }
 
     private func alreadyPressed(_ label: String, history: [VoiceControlAction]) -> Bool {
@@ -252,7 +256,7 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
         -> Bool
     {
         history.contains {
-            $0.targetID == target.id && $0.value?.caseInsensitiveCompare(expected) == .orderedSame
+            $0.referring(to: target) && $0.value?.caseInsensitiveCompare(expected) == .orderedSame
                 && ($0.receiptStatus == .verified || $0.receiptStatus == .transitionObserved)
         }
     }

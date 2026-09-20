@@ -28,7 +28,7 @@ enum VoiceControlNamedPageAction {
         }
         guard matches.count == 1 else { return nil }
         if history.contains(where: {
-            $0.targetID == matches[0].id
+            $0.referring(to: matches[0])
                 && ($0.receiptStatus == .verified || $0.receiptStatus == .transitionObserved)
         }) {
             return nil

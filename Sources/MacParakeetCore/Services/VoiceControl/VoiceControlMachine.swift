@@ -37,7 +37,7 @@ public struct VoiceControlEnabledEvent: Equatable, Sendable, Identifiable {
 }
 
 /// What must be true on the next snapshot if this landing succeeded.
-public enum VoiceControlPostcondition: Equatable, Sendable {
+public enum VoiceControlPostcondition: Equatable, Sendable, Codable {
     case selectedLabel(String)
     case unknown
 

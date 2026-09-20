@@ -55,12 +55,21 @@ public struct VoiceControlAction: Codable, Sendable, Equatable {
     public let consequence: VoiceControlConsequence?
     public let modelID: String?
     public let decisionConfidence: Double?
+    public let postcondition: VoiceControlPostcondition
     public init(
         operation: VoiceControlOperation, targetID: String, value: String? = nil, targetLabel: String? = nil,
-        requiresConfirmation: Bool = false, receiptStatus: VoiceControlReceipt.Status? = nil, consequence: VoiceControlConsequence? = nil, modelID: String? = nil, decisionConfidence: Double? = nil
+        requiresConfirmation: Bool = false, receiptStatus: VoiceControlReceipt.Status? = nil, consequence: VoiceControlConsequence? = nil, modelID: String? = nil, decisionConfidence: Double? = nil,
+        postcondition: VoiceControlPostcondition = .unknown
     ) {
         self.operation = operation; self.targetID = targetID; self.value = value; self.targetLabel = targetLabel;
         self.requiresConfirmation = requiresConfirmation; self.receiptStatus = receiptStatus; self.consequence = consequence; self.modelID = modelID; self.decisionConfidence = decisionConfidence
+        self.postcondition = postcondition
+    }
+
+    func referring(to target: VoiceControlTarget) -> Bool {
+        if targetID == target.id { return true }
+        guard let targetLabel, !targetLabel.isEmpty else { return false }
+        return targetLabel.localizedStandardCompare(target.label) == .orderedSame
     }
 }
 
@@ -98,6 +107,8 @@ public protocol VoiceControlAdapter: Sendable {
 public enum VoiceControlDecision: Sendable, Equatable {
     case action(VoiceControlAction)
     case clarify(String)
+    /// Local numbered disambiguation. Saying the number must not call Jev.
+    case pick(prompt: String, labels: [String], targetIDs: [String])
     /// Model inference is never reported as independently verified task completion.
     case finished
     /// Exact local command whose requested effect was independently verified.

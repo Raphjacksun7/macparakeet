@@ -35,6 +35,7 @@ import Foundation
                     "Model reports complete; independently inspect fixture values. elapsed=\(start.duration(to: .now))");
                 return
             case .clarify(let question): print("Clarification: \(question)"); return
+            case .pick(let prompt, _, _): print("Clarification: \(prompt)"); return
             case .action(let action):
                 // Probe performs only synthetic text writes. No implicit confirmation
                 // bypass for buttons, keystrokes or an external app switch.

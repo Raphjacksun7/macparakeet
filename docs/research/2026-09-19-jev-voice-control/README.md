@@ -21,6 +21,8 @@ Jev is a strong fit for the action-selection path. It should evaluate the curren
 5. [Platform and additional implementations](platform-and-ecosystem.md): official Jev facts, measured-vs-claimed evidence, Jev Ultrafast source review, six additional open-source projects and current MacParakeet reuse boundaries.
 6. [North-star computer use](north-star-computer-use.md) and [what we adopted](north-star-adoption.md): synthesis of the `references/` Jev and computer-use checkouts, plus the everyday magic catalog in [everyday-use-cases.md](everyday-use-cases.md).
 7. [Jev decision architecture](jev-decision-architecture.md): code lists legal events; Jev chooses only when more than one is enabled. Competing picker rows are outcomes, not keystrokes ([predict outcomes](jev-outcome-choice.md)). Consults: [GPT-6 Astra](consult-gpt6-astra-jev-architecture.md), [Fable 5.1](consult-fable-jev-architecture.md), [Avidlive sheets](avidlive-jev-engineering.md).
+8. [Accessibility / voice primitives](accessibility-voice-primitives.md): `blind.sh`, VoiceCraft, Skales — modes, confirmation copy, traps. Not Jev. Fable 5.1 medium: [consult-fable-accessibility-voice-primitives.md](consult-fable-accessibility-voice-primitives.md).
+9. [Jarvis-family / intent capture](jarvis-family-primitives.md): `J.A.R.V.I.S`, `Jarvis`, `Jarvis-Desktop-Voice-Assistant`, OpenJarvis. Numbered local picks. UX rules for 2026–2027 computer control. Fable 5.1 low: [consult-fable-jarvis-family.md](consult-fable-jarvis-family.md).
 
 ## What to take from each reference
 
@@ -61,6 +63,33 @@ No reference application, speech session, desktop action, or model request was e
 - [Jev decision architecture](jev-decision-architecture.md) and consults: [GPT-6 Astra](consult-gpt6-astra-jev-architecture.md), [Fable 5.1 high](consult-fable-jev-architecture.md).
 - [Predict outcomes, not steps](jev-outcome-choice.md): Tetris landing vs button. Fable 5.1 medium: [consult-fable-jev-outcome-choice.md](consult-fable-jev-outcome-choice.md).
 - [Avidlive Jev Engineering](avidlive-jev-engineering.md): four-sheet source extraction plus Voice Control mapping. Fable 5.1 medium second review: [consult-fable-avidlive-jev-engineering.md](consult-fable-avidlive-jev-engineering.md).
+- [Accessibility / voice primitives](accessibility-voice-primitives.md): three non-Jev checkouts (`blind.sh`, VoiceCraft, Skales). Fable 5.1 medium: [consult-fable-accessibility-voice-primitives.md](consult-fable-accessibility-voice-primitives.md).
 - Delegation prompts are preserved under [briefs](briefs/). Reference checkout identities and public permalinks live in each report. The documents stand alone without requiring the ignored local checkout folder.
 
 `/references/` stays gitignored. Local checkouts remain on disk. The DEBUG experiment and decision-machine docs land in this PR; live Flights results and microphone qualification are still unproven.
+
+## Reference checkout catalog (2026-09-20)
+
+All folders under `macparakeet/references/` (gitignored). Ideas only; no binaries executed.
+
+| Folder | Kind | Extraction |
+|---|---|---|
+| `jev-ultrafast` | Jev computer-use | [north-star §2.1](north-star-computer-use.md) |
+| `jev-voice-browser` | Speech-timing | [north-star §2.2](north-star-computer-use.md), [jev-voice-browser.md](jev-voice-browser.md) |
+| `macbrow` | Routing / slots | [north-star §2.3](north-star-computer-use.md), [macbrow.md](macbrow.md) |
+| `third-hand` | Native AX loop | [north-star §2.4](north-star-computer-use.md), [third-hand.md](third-hand.md) |
+| `jev-use` | Native AX questions | [north-star §2.5](north-star-computer-use.md) |
+| `Jevbridge` | Gate (caution) | [north-star §2.6](north-star-computer-use.md) |
+| `jev-browser` | Candidate scaling | [north-star §2.7](north-star-computer-use.md) |
+| `jev-desktop` | Data-boundary table | [north-star §2.8](north-star-computer-use.md) |
+| `hermes-jev-skills` | Fail-open ops | [north-star §2.9](north-star-computer-use.md) |
+| `tiptour-macos` | Grounding order | [north-star §2.10](north-star-computer-use.md) |
+| `jev-research-sources` | Rango / Talon / mac-use | [north-star §2.11](north-star-computer-use.md) |
+| `blind.sh` | Accessibility modes | [accessibility-voice-primitives.md](accessibility-voice-primitives.md) |
+| `VoiceCraft` | Voice UX traps | same |
+| `skales` | Sidebar / confirm copy | same |
+| `J.A.R.V.I.S` | 2021 hobby assistant | [jarvis-family-primitives.md](jarvis-family-primitives.md) |
+| `Jarvis` | CLI plugins | same |
+| `Jarvis-Desktop-Voice-Assistant` | Keyword soup | same |
+| `OpenJarvis` | Local-first floor | same |
+

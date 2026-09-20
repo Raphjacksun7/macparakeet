@@ -101,7 +101,8 @@ final class VoiceControlMachineTests: XCTestCase {
             result,
             .action(
                 VoiceControlAction(
-                    operation: .press, targetID: "c0", targetLabel: "Zürich, Switzerland", consequence: .ordinary)))
+                    operation: .press, targetID: "c0", targetLabel: "Zürich, Switzerland", consequence: .ordinary,
+                    postcondition: .selectedLabel("Zürich, Switzerland"))))
     }
 
     func testJevEventChoiceExecutesOnlyTheOfferedEvent() async throws {
@@ -111,13 +112,15 @@ final class VoiceControlMachineTests: XCTestCase {
                 criteria: "London, United Kingdom — city match for destination",
                 action: VoiceControlAction(
                     operation: .press, targetID: "c0", targetLabel: "London, United Kingdom",
-                    consequence: .ordinary)),
+                    consequence: .ordinary, postcondition: .selectedLabel("London, United Kingdom")),
+                postcondition: .selectedLabel("London, United Kingdom")),
             VoiceControlEnabledEvent(
                 id: "pick-ontario",
                 criteria: "London, Ontario, Canada — city match for destination",
                 action: VoiceControlAction(
                     operation: .press, targetID: "c1", targetLabel: "London, Ontario, Canada",
-                    consequence: .ordinary)),
+                    consequence: .ordinary, postcondition: .selectedLabel("London, Ontario, Canada")),
+                postcondition: .selectedLabel("London, Ontario, Canada")),
         ]
         let client = JevDecisionClient(
             apiKey: "test", consent: { true },
@@ -170,8 +173,9 @@ final class VoiceControlMachineTests: XCTestCase {
         do { _ = try await client.decide(goal: "Find flights to London", snapshot: snapshot, history: []) } catch {}
         let json = try JSONSerialization.jsonObject(with: await capture.body) as? [String: Any]
         let questions = json?["questions"] as? [String: [String: Any]]
-        let keys = questions?["key"]?["criteria"] as? [String: String]
-        XCTAssertEqual(Set((keys ?? [:]).keys), ["escape", "none"])
+        XCTAssertNil(questions?["key"])
+        let operations = questions?["operation"]?["criteria"] as? [String: String]
+        XCTAssertFalse((operations ?? [:]).keys.contains("key"))
         let observation = (json?["state"] as? [String: Any])?["observation"] as? [String: Any]
         let targets = observation?["targets"] as? [[String: Any]]
         XCTAssertEqual((targets ?? []).compactMap { $0["id"] as? String }.sorted(), ["c0", "else"])
@@ -270,6 +274,6 @@ private extension VoiceControlAction {
         VoiceControlAction(
             operation: operation, targetID: targetID, value: value, targetLabel: targetLabel,
             requiresConfirmation: requiresConfirmation, receiptStatus: receiptStatus, consequence: consequence,
-            modelID: modelID, decisionConfidence: confidence)
+            modelID: modelID, decisionConfidence: confidence, postcondition: postcondition)
     }
 }

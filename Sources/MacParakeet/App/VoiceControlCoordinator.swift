@@ -452,29 +452,40 @@ final class VoiceControlCoordinator {
         guard !text.isEmpty, ensureSession() else { return }
         let command = text.lowercased().trimmingCharacters(in: .punctuationCharacters)
         if literalMode {
-            if command == "command mode" {
+            switch VoiceControlSessionGrammar.phrase(text, literalMode: true) {
+            case .exitLiteral:
                 literalMode = false; model.literalMode = false
                 model.message = "Command mode. Instructions control the app again."
                 return
+            case .stopFromLiteral:
+                stop(); return
+            case .enterLiteral, nil:
+                dismissPendingAuthorizationForLiteral()
+                dispatch(Self.literalInstruction(text), asLiteralPayload: true)
+                return
             }
-            if command == "command stop" { stop(); return }
-            dispatch(Self.literalInstruction(text))
-            return
         }
-        if ["yes", "okay", "ok"].contains(command), model.conversation.expectedResponse == .confirmation {
-            confirm(); return
+        if model.conversation.expectedResponse == .confirmation {
+            if VoiceControlSessionGrammar.acceptsConfirmation(text) {
+                confirm(); return
+            }
+            if VoiceControlSessionGrammar.declinesConfirmation(text) {
+                cancelTask(); return
+            }
+        }
+        if VoiceControlSessionGrammar.phrase(text, literalMode: false) == .enterLiteral {
+            dismissPendingAuthorizationForLiteral()
+            literalMode = true; model.literalMode = true
+            model.message =
+                "Typing mode. Words are typed. Say ‘command mode’ or ‘stop typing’ to return, or ‘command stop’ to pause."
+            return
         }
         switch command {
-        case "literal mode", "dictation mode":
-            literalMode = true; model.literalMode = true
-            model.message = "Literal mode. Words are typed. Say ‘command mode’ to return or ‘command stop’ to pause."
-            return
         case "stop", "pause": stop(); return
         case "cancel", "cancel task": cancelTask(); return
         case "stop listening": stopListening(); return
         case "end voice control": end(); return
         case "resume", "continue", "continue task": resume(); return
-        case "confirm", "confirm this action": confirm(); return
         default: break
         }
         dispatch(text)
@@ -504,9 +515,21 @@ final class VoiceControlCoordinator {
             self.admissionRelease = nil
         }
     }
-    private func dispatch(_ text: String, asRevision: Bool = false) {
+    private func dismissPendingAuthorizationForLiteral() {
+        switch model.conversation.expectedResponse {
+        case .confirmation:
+            model.conversation.cancel()
+            model.message = "Confirmation dismissed. That step was skipped."
+        case .clarification:
+            _ = model.conversation.takeClarification()
+            model.message = "Question dismissed. Words will be typed."
+        default:
+            break
+        }
+    }
+    private func dispatch(_ text: String, asRevision: Bool = false, asLiteralPayload: Bool = false) {
         let submission = submissions.begin()
-        let correction = asRevision || (!model.goal.isEmpty && VoiceControlConversationState.isCorrection(text))
+        let correction = !asLiteralPayload && (asRevision || (!model.goal.isEmpty && VoiceControlConversationState.isCorrection(text)))
         if !correction && model.conversation.expectedResponse != .clarification {
             model.goal = text; model.steps = []
         }
@@ -516,7 +539,7 @@ final class VoiceControlCoordinator {
         }
         runner?.stop()
         guard let runner else { return }
-        let clarification = model.conversation.takeClarification()
+        let clarification = !asLiteralPayload && model.conversation.takeClarification()
         let needsSnapshot = !speechSubmission && !skipInvocationSnapshot
         skipInvocationSnapshot = false
         let snapshotTask = invocationSnapshotTask

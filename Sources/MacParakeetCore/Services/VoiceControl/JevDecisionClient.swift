@@ -62,7 +62,7 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
                 "Use only when no offered page control can progress the goal. Do not clarify merely because several ordinary fields remain.",
         ]
         for operation in VoiceControlOperation.allCases
-        where available.contains(where: { $0.operations.contains(operation) }) {
+        where operation != .key && available.contains(where: { $0.operations.contains(operation) }) {
             switch operation {
             case .setValue:
                 operations[operation.rawValue] =
@@ -75,8 +75,7 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
             case .scroll:
                 operations[operation.rawValue] = "Scroll an offered area up or down to reveal controls or content."
             case .key:
-                operations[operation.rawValue] =
-                    "Send an explicitly requested supported keyboard key to the focused control."
+                continue
             case .activateApp:
                 operations[operation.rawValue] = "Bring an offered running application to the foreground."
             }
@@ -106,18 +105,14 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
             instructions:
                 "Assuming the next action scrolls, choose the direction requested by the user; default down when continuing a goal.",
             criteria: ["up": "Scroll upward", "down": "Scroll downward"])
-        questions["key"] = Question(
-            instructions:
-                "Assuming the next action is a keyboard command, choose the explicitly requested key. Never infer Return/Enter for a form submission. Return is unavailable while a suggestion or date picker is open.",
-            criteria: Dictionary(uniqueKeysWithValues: VoiceControlLegality.offeredKeys(in: snapshot).map {
-                ($0, $0 == "escape" ? "Explicit Escape" : $0 == "return" ? "Explicit Enter or Return" : "Next field")
-            } + [("none", "No supported explicit key")]))
         // Selection contents belong exclusively to the separately consented writing
         // surface. Keep the original snapshot intact for local command routing.
+        // Keystrokes are host-owned (explicit “press return/escape”); unconstrained Jev
+        // chooses among observed landings and fields, not keys.
         let wireTargets = available.map {
             VoiceControlTarget(
                 id: $0.id, label: $0.label, role: $0.role, value: $0.value,
-                operations: $0.operations, isNavigation: $0.isNavigation,
+                operations: $0.operations.subtracting([.key]), isNavigation: $0.isNavigation,
                 isFocused: $0.isFocused, selectedText: nil, valueIsComplete: $0.valueIsComplete, consequence: $0.consequence)
         }
         let wireSnapshot = VoiceControlSnapshot(
@@ -248,7 +243,8 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
                 operation: action.operation, targetID: action.targetID, value: action.value,
                 targetLabel: action.targetLabel, requiresConfirmation: action.requiresConfirmation,
                 receiptStatus: action.receiptStatus, consequence: action.consequence,
-                modelID: Self.model, decisionConfidence: answer.confidence))
+                modelID: Self.model, decisionConfidence: answer.confidence,
+                postcondition: event.postcondition == .unknown ? action.postcondition : event.postcondition))
     }
 
     static func sourceSpans(_ text: String) -> [String] {

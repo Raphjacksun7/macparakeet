@@ -84,9 +84,10 @@ final class VoiceControlCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.targets[0].selectedText, selected)
         let questions = try XCTUnwrap(json["questions"] as? [String: [String: Any]])
         let direction = try XCTUnwrap(questions["direction"]?["criteria"] as? [String: String])
-        let keys = try XCTUnwrap(questions["key"]?["criteria"] as? [String: String])
         XCTAssertEqual(Set(direction.keys), ["up", "down"])
-        XCTAssertEqual(Set(keys.keys), ["return", "escape", "tab", "none"])
+        XCTAssertNil(questions["key"])
+        let operations = try XCTUnwrap(questions["operation"]?["criteria"] as? [String: String])
+        XCTAssertFalse(operations.keys.contains("key"))
     }
 
     func testJevRequestOmitsAppSwitchingWhenPageControlsExist() async throws {
@@ -231,6 +232,25 @@ final class VoiceControlCoreTests: XCTestCase {
         let executed = await adapter.executed
         XCTAssertEqual(executed, 1)
     }
+
+    func testStaleSnapshotIDsRematchByUniqueLabel() async {
+        let adapter = CoreTransitionAdapter(changesState: false)
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: CoreStaleIDEngine())
+        await runner.submit("Open the next page")
+        let executed = await adapter.executed
+        XCTAssertEqual(executed, 1)
+    }
+
+    func testSelectedLabelPostconditionPromotesTransitionToVerified() async {
+        let adapter = CoreLandingAdapter()
+        let engine = CoreLandingEngine()
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: engine)
+        await runner.submit("Choose Zurich")
+        let history = await engine.lastHistory
+        XCTAssertEqual(history.last?.receiptStatus, .verified)
+        let records = await runner.traceSnapshot()
+        XCTAssertTrue(records.contains { $0.outcome == "postcondition_holds" })
+    }
 }
 
 private actor CoreTestAdapter: VoiceControlAdapter {
@@ -301,6 +321,47 @@ private struct CoreRepeatingEngine: VoiceControlDecisionEngine {
         -> VoiceControlDecision
     {
         .action(VoiceControlAction(operation: .press, targetID: snapshot.targets[0].id))
+    }
+}
+
+private struct CoreStaleIDEngine: VoiceControlDecisionEngine {
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
+    {
+        .action(VoiceControlAction(operation: .press, targetID: "stale", targetLabel: "Next"))
+    }
+}
+
+private actor CoreLandingAdapter: VoiceControlAdapter {
+    var executed = 0
+    func observe() async throws -> VoiceControlSnapshot {
+        VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(
+                    id: "city", label: "Zürich, Switzerland", role: "AXStaticText", operations: [.press],
+                    isFocused: executed > 0)
+            ])
+    }
+    func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws
+        -> VoiceControlReceipt
+    {
+        try authority.check(); executed += 1
+        return VoiceControlReceipt(status: .transitionObserved)
+    }
+}
+
+private actor CoreLandingEngine: VoiceControlDecisionEngine {
+    var lastHistory: [VoiceControlAction] = []
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
+    {
+        lastHistory = history
+        if history.last?.receiptStatus == .verified { return .finished }
+        return .action(
+            VoiceControlAction(
+                operation: .press, targetID: "city", targetLabel: "Zürich, Switzerland",
+                postcondition: .selectedLabel("Zürich, Switzerland")))
     }
 }
 

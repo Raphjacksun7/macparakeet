@@ -65,6 +65,17 @@ final class VoiceControlRecoveryTests: XCTestCase {
         XCTAssertEqual(effects.map(\.targetID), ["alpha", "beta"])
     }
 
+    func testNumberedPickResolvesTheOtherOneWithoutRepeatingTheLabel() async {
+        let adapter = RecoveryAdapter()
+        let engine = RecoveryEngine([.action(.init(operation: .press, targetID: "alpha")), .finished, .finished])
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: engine)
+        await runner.submit("Open Alpha")
+        await runner.revise("No, the other one")
+        await runner.clarify("2")
+        let effects = await adapter.effects
+        XCTAssertEqual(effects.map(\.targetID), ["alpha", "gamma"])
+    }
+
     func testRevisingLiteralTaskCannotTriggerOldLocalCompletion() async {
         let adapter = RecoveryAdapter()
         let fallback = RecoveryEngine([.action(.init(operation: .setValue, targetID: "destination", value: "London")), .finished])
@@ -235,6 +246,9 @@ final class VoiceControlRecoveryTests: XCTestCase {
         XCTAssertEqual(policy("Submit search"), .ordinary)
         XCTAssertEqual(policy("Globe", assessment: .unknown), .ordinary)
         XCTAssertEqual(policy("Pay now"), .payment)
+        XCTAssertEqual(policy("Place your order"), .payment)
+        XCTAssertEqual(policy("Complete booking"), .payment)
+        XCTAssertEqual(policy("Address book"), .ordinary)
         XCTAssertEqual(policy("Delete file"), .destructive)
         XCTAssertEqual(policy("Send message"), .externalCommitment)
         XCTAssertEqual(policy("Payment amount", operation: .setValue), .ordinary)

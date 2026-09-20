@@ -28,17 +28,11 @@ public struct VoiceControlWebQuery: Equatable, Sendable {
         }
         if let search = snapshot.targets.first(where: Self.isSearchControl),
             !history.contains(where: {
-                $0.targetID == search.id && ($0.receiptStatus == .verified || $0.receiptStatus == .transitionObserved)
+                $0.referring(to: search)
+                    && ($0.receiptStatus == .verified || $0.receiptStatus == .transitionObserved)
             })
         {
             return ordinary(.press, search.id)
-        }
-        if let last = history.last, last.operation == .setValue, last.value == query,
-            last.receiptStatus == .verified || last.receiptStatus == .transitionObserved,
-            let focused = snapshot.targets.first(where: { $0.isFocused && $0.operations.contains(.key) }),
-            !history.contains(where: { $0.operation == .key && $0.value == "return" })
-        {
-            return ordinary(.key, focused.id, "return")
         }
         return nil
     }
@@ -104,7 +98,7 @@ public struct VoiceControlWebQuery: Equatable, Sendable {
 
     private func needs(_ target: VoiceControlTarget, history: [VoiceControlAction]) -> Bool {
         if history.contains(where: {
-            $0.targetID == target.id && $0.value == query
+            $0.referring(to: target) && $0.value == query
                 && ($0.receiptStatus == .verified || $0.receiptStatus == .transitionObserved)
         }) {
             return false

@@ -39,7 +39,9 @@ public actor VoiceControlTurnRunner {
     private var referenceTime = Date.distantPast
     private var otherRequested = false
     private var alternativeLabels: [String] = []
+    private var alternativeIDs: [String] = []
     private var chosenAlternative: String?
+    private var chosenTargetID: String?
     private var manualOverrides: [String: String] = [:]
     private var manualContextMismatch = false
     private var revisionSupersedesManualValues = false
@@ -77,7 +79,7 @@ public actor VoiceControlTurnRunner {
         guard submissionAuthority?.isValid != false else { return }
         stop(); submissionID = UUID(); pending = nil; expiryTask?.cancel(); cancelled = true
         goal = ""; amendments = []; history = []; referenceSnapshot = nil; referenceAction = nil
-        lastSnapshot = nil; manualOverrides = [:]; otherRequested = false; alternativeLabels = []; chosenAlternative = nil
+        lastSnapshot = nil; manualOverrides = [:]; otherRequested = false; alternativeLabels = []; alternativeIDs = []; chosenAlternative = nil; chosenTargetID = nil
         record("task", outcome: "cancelled")
         continuation.yield(.cancelled)
     }
@@ -99,7 +101,7 @@ public actor VoiceControlTurnRunner {
         expiryTask?.cancel(); requests = 0; dispatched = 0; activeSeconds = 0
         dispatchedStates = []; uncertainEffects = []; manualOverrides = [:]; manualContextMismatch = false; revisionSupersedesManualValues = false
         lastSnapshot = nil; referenceSnapshot = nil; referenceAction = nil
-        otherRequested = false; alternativeLabels = []; chosenAlternative = nil
+        otherRequested = false; alternativeLabels = []; alternativeIDs = []; chosenAlternative = nil; chosenTargetID = nil
         _ = gate.takeManualPause()
         taskID = UUID(); revision = 0
         record("task", outcome: "started")
@@ -117,7 +119,7 @@ public actor VoiceControlTurnRunner {
         pending = nil; expiryTask?.cancel(); revision += 1
         let normalized = correction.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         otherRequested = ["other one", "the other one", "no the other one", "no, the other one", "not that one"].contains(normalized)
-        chosenAlternative = nil; alternativeLabels = []
+        chosenAlternative = nil; chosenTargetID = nil; alternativeLabels = []; alternativeIDs = []
         amendments.append("User correction (overrides earlier conflicting requirements): " + correction)
         if amendments.count > 20 { amendments.removeFirst(amendments.count - 20) }
         record("revision", outcome: otherRequested ? "alternative_requested" : "goal_amended")
@@ -135,12 +137,24 @@ public actor VoiceControlTurnRunner {
     public func clarify(_ answer: String, submissionAuthority: ActionAuthority? = nil) async {
         guard hasTask, !running, submissionAuthority?.isValid != false else { return }
         ingressAuthority = submissionAuthority
-        if !alternativeLabels.isEmpty {
-            let matches = alternativeLabels.filter { $0.caseInsensitiveCompare(answer.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }
-            guard matches.count == 1 else {
-                continuation.yield(.clarification("Which alternative: " + alternativeLabels.joined(separator: ", ") + "?")); return
+        if !alternativeLabels.isEmpty || !alternativeIDs.isEmpty {
+            let count = max(alternativeLabels.count, alternativeIDs.count)
+            if let index = VoiceControlSpokenPick.index(in: answer, count: count) {
+                if alternativeLabels.indices.contains(index) { chosenAlternative = alternativeLabels[index] }
+                if alternativeIDs.indices.contains(index) { chosenTargetID = alternativeIDs[index] }
+            } else {
+                let matches = alternativeLabels.filter {
+                    $0.caseInsensitiveCompare(answer.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                }
+                guard matches.count == 1, let match = matches.first,
+                    let index = alternativeLabels.firstIndex(of: match)
+                else {
+                    continuation.yield(
+                        .clarification(VoiceControlSpokenPick.prompt(labels: alternativeLabels))); return
+                }
+                chosenAlternative = match
+                if alternativeIDs.indices.contains(index) { chosenTargetID = alternativeIDs[index] }
             }
-            chosenAlternative = matches[0]
         }
         amendments.append("User clarification: " + answer); revision += 1
         record("revision", outcome: "clarified")
@@ -341,13 +355,48 @@ public actor VoiceControlTurnRunner {
         let alternatives = snapshot.targets.filter { target in
             target.operations.contains(action.operation) && target.label != rejected.label && offered.contains(where: { $0.label == target.label && $0.role == target.role })
         }
-        let chosen = alternatives.filter { chosenAlternative == nil || $0.label == chosenAlternative }
-        guard chosen.count == 1, let target = chosen.first else {
-            alternativeLabels = Array(Set(alternatives.map(\.label))).sorted().prefix(6).map { $0 }
-            return .clarify(alternativeLabels.isEmpty ? "No other matching control is visible. Name the control you want." : "Which alternative: " + alternativeLabels.joined(separator: ", ") + "?")
+        let chosen = alternatives.filter {
+            if let id = chosenTargetID { return $0.id == id }
+            if let name = chosenAlternative { return $0.label == name }
+            return true
         }
-        otherRequested = false; alternativeLabels = []; chosenAlternative = nil
+        guard chosen.count == 1, let target = chosen.first else {
+            var seen = Set<String>()
+            var picks: [VoiceControlTarget] = []
+            for target in alternatives {
+                if seen.insert(target.id).inserted { picks.append(target) }
+                if picks.count == 6 { break }
+            }
+            alternativeLabels = picks.map(\.label)
+            alternativeIDs = picks.map(\.id)
+            return alternativeLabels.isEmpty
+                ? .clarify("No other matching control is visible. Name the control you want.")
+                : .pick(
+                    prompt: VoiceControlSpokenPick.prompt(labels: alternativeLabels),
+                    labels: alternativeLabels, targetIDs: alternativeIDs)
+        }
+        otherRequested = false; alternativeLabels = []; alternativeIDs = []; chosenAlternative = nil; chosenTargetID = nil
         return .action(VoiceControlAction(operation: action.operation, targetID: target.id, value: action.value, targetLabel: target.label))
+    }
+    private func resolvedPick(_ snapshot: VoiceControlSnapshot) -> VoiceControlDecision? {
+        guard !otherRequested, chosenTargetID != nil || chosenAlternative != nil else { return nil }
+        if let id = chosenTargetID, let target = snapshot.targets.first(where: { $0.id == id }),
+            target.operations.contains(.press) || target.operations.contains(.activateApp)
+        {
+            chosenAlternative = nil
+            chosenTargetID = nil
+            alternativeLabels = []
+            alternativeIDs = []
+            return .action(
+                VoiceControlAction(
+                    operation: target.operations.contains(.activateApp) ? .activateApp : .press,
+                    targetID: target.id, targetLabel: target.label))
+        }
+        chosenAlternative = nil
+        chosenTargetID = nil
+        alternativeLabels = []
+        alternativeIDs = []
+        return .clarify("Those options are no longer current. Name the control you want.")
     }
     private func run() async {
         guard !running, hasTask else { return }
@@ -363,6 +412,7 @@ public actor VoiceControlTurnRunner {
                 }
                 continuation.yield(.observing)
                 let snapshot = try await observe(authority: authority)
+                reconcilePostcondition(in: snapshot)
                 guard absorbManualChanges(snapshot) else { return }
                 lastSnapshot = snapshot
                 if let previous, Self.semanticTargets(previous) == Self.semanticTargets(snapshot), previous.contextID == snapshot.contextID, previous.summary == snapshot.summary { noProgress += 1 } else { noProgress = 0 }
@@ -372,7 +422,7 @@ public actor VoiceControlTurnRunner {
                 }
                 previous = snapshot
                 continuation.yield(.deciding)
-                let next = alternativeDecision(snapshot)
+                let next = alternativeDecision(snapshot) ?? resolvedPick(snapshot)
                 let decision: VoiceControlDecision
                 if let next {
                     if case .action(let action) = next {
@@ -381,6 +431,8 @@ public actor VoiceControlTurnRunner {
                             modelID: "local", observation: snapshot, action: action)
                     } else if case .clarify = next {
                         record("decision", outcome: "clarify", detail: "alternative")
+                    } else if case .pick = next {
+                        record("decision", outcome: "clarify", detail: "numbered_pick")
                     }
                     decision = next
                 } else { decision = try await self.decision(snapshot: snapshot, authority: authority) }
@@ -400,28 +452,35 @@ public actor VoiceControlTurnRunner {
                 case .clarify(let question):
                     record("policy", outcome: "clarification_needed")
                     continuation.yield(.clarification(question)); return
+                case .pick(let prompt, let labels, let ids):
+                    alternativeLabels = Array(labels.prefix(6))
+                    alternativeIDs = Array(ids.prefix(6))
+                    record("policy", outcome: "numbered_pick")
+                    continuation.yield(.clarification(prompt)); return
                 case .action(let action):
-                    guard let target = snapshot.targets.first(where: { $0.id == action.targetID }), target.operations.contains(action.operation) else {
+                    guard let bound = bind(action, to: snapshot),
+                        let target = snapshot.targets.first(where: { $0.id == bound.targetID })
+                    else {
                         record("policy", outcome: "unoffered_target", observation: snapshot, action: action)
                         continuation.yield(.failed("The requested control is no longer available.")); return
                     }
-                    guard !isRepeated(action, snapshot: snapshot) else { return }
-                    let consequence = VoiceControlConsequencePolicy.consequence(of: action, target: target)
-                    if action.requiresConfirmation || consequence != .ordinary {
-                        offerConfirmation(action, target: target, snapshot: snapshot, authority: authority, consequence: consequence); return
+                    guard !isRepeated(bound, snapshot: snapshot) else { return }
+                    let consequence = VoiceControlConsequencePolicy.consequence(of: bound, target: target)
+                    if bound.requiresConfirmation || consequence != .ordinary {
+                        offerConfirmation(bound, target: target, snapshot: snapshot, authority: authority, consequence: consequence); return
                     }
                     record(
-                        "policy", operation: action.operation, outcome: "ordinary_authorized",
-                        observation: snapshot, action: action)
+                        "policy", operation: bound.operation, outcome: "ordinary_authorized",
+                        observation: snapshot, action: bound)
                     do {
-                        guard try await perform(action, snapshot: snapshot, authority: authority) else { return }
+                        guard try await perform(bound, snapshot: snapshot, authority: authority) else { return }
                     } catch let error as NativeVoiceControlError
                         where error == .targetChanged || error == .changed || error == .observationExpired
                             || error == .windowChanged
                     {
                         record(
-                            "dispatch", operation: action.operation, outcome: "stale_reobserve",
-                            observation: snapshot, action: action)
+                            "dispatch", operation: bound.operation, outcome: "stale_reobserve",
+                            observation: snapshot, action: bound)
                         continue
                     }
                 }
@@ -435,8 +494,8 @@ public actor VoiceControlTurnRunner {
         record(
             "policy", operation: action.operation, outcome: "confirmation_" + consequence.rawValue,
             observation: snapshot, action: action)
-        let prefix = consequence == .ordinary ? "Apply this replacement" : consequence == .unknown ? "Allow this action with an unverified consequence" : "Confirm " + consequence.rawValue
-        continuation.yield(.confirmation(action, prefix + " on \(target.label)?" + (action.requiresConfirmation ? "\n" + String((action.value ?? "").prefix(1_000)) : "")))
+        let prefix = VoiceControlConfirmationCopy.prompt(action: action, target: target, consequence: consequence)
+        continuation.yield(.confirmation(action, prefix))
         expiryTask?.cancel()
         let seconds = limits.confirmationSeconds
         expiryTask = Task { [weak self] in
@@ -503,7 +562,43 @@ public actor VoiceControlTurnRunner {
     }
     private func historyAction(_ action: VoiceControlAction, snapshot: VoiceControlSnapshot, status: VoiceControlReceipt.Status) -> VoiceControlAction {
         VoiceControlAction(operation: action.operation, targetID: action.targetID, value: action.value,
-            targetLabel: snapshot.targets.first(where: { $0.id == action.targetID })?.label, receiptStatus: status, consequence: action.consequence)
+            targetLabel: snapshot.targets.first(where: { $0.id == action.targetID })?.label ?? action.targetLabel,
+            receiptStatus: status, consequence: action.consequence, modelID: action.modelID,
+            decisionConfidence: action.decisionConfidence, postcondition: action.postcondition)
+    }
+    private func reconcilePostcondition(in snapshot: VoiceControlSnapshot) {
+        guard let last = history.last, last.postcondition != .unknown,
+            last.postcondition.holds(in: snapshot),
+            last.receiptStatus == .transitionObserved || last.receiptStatus == .unknown
+        else { return }
+        history[history.count - 1] = VoiceControlAction(
+            operation: last.operation, targetID: last.targetID, value: last.value,
+            targetLabel: last.targetLabel, requiresConfirmation: last.requiresConfirmation,
+            receiptStatus: .verified, consequence: last.consequence, modelID: last.modelID,
+            decisionConfidence: last.decisionConfidence, postcondition: last.postcondition)
+        record(
+            "verification", operation: last.operation, outcome: "postcondition_holds",
+            observation: snapshot, action: last)
+    }
+    private func bind(_ action: VoiceControlAction, to snapshot: VoiceControlSnapshot) -> VoiceControlAction? {
+        if let target = snapshot.targets.first(where: { $0.id == action.targetID }),
+            target.operations.contains(action.operation)
+        {
+            return action
+        }
+        guard let label = action.targetLabel, !label.isEmpty else { return nil }
+        let matches = snapshot.targets.filter {
+            $0.operations.contains(action.operation)
+                && $0.label.localizedStandardCompare(label) == .orderedSame
+        }
+        guard matches.count == 1 else { return nil }
+        let target = matches[0]
+        return VoiceControlAction(
+            operation: action.operation, targetID: target.id, value: action.value,
+            targetLabel: target.label, requiresConfirmation: action.requiresConfirmation,
+            receiptStatus: action.receiptStatus, consequence: action.consequence,
+            modelID: action.modelID, decisionConfidence: action.decisionConfidence,
+            postcondition: action.postcondition)
     }
     private func isRepeated(_ action: VoiceControlAction, snapshot: VoiceControlSnapshot) -> Bool {
         if uncertainEffects.contains(effectIdentity(action, snapshot: snapshot)) {

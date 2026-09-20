@@ -69,7 +69,7 @@ Allowlisted site opens (`role=url` never reaches Jev), running-app activation, e
 
 Competing unfocused city rows — London, United Kingdom vs London, Ontario — are landings: *after the host acts, this label is the selected result.* Unique `Zürich` vs typed `Zurich` stays local. Generic footer links are not landings; their post-state is unknown.
 
-The unconstrained leftover still asks operation / target / key. That is the Tetris “which button” rung. It is a documented hole, not pretended away.
+The unconstrained leftover still asks operation / target on generic pages. Keystrokes are host-owned. That leftover is documented, not pretended away.
 
 ### Google Flights, honestly
 
@@ -96,7 +96,7 @@ Governing spec: [ADR-033](spec/adr/033-explicit-voice-control.md), [contract](sp
 - Foreground AX mutation races with dictation and Transforms (`GUIMutationArbiter`).
 - Situation heuristics are still Flights-shaped. Explicit “press return” still routes locally.
 - Duplicate-effect protection can stall a turn that needs a *different* dismissal if the snapshot does not change.
-- `postcondition.holds` is tested and not yet wired into the turn runner; receipts still come from the adapter.
+- Unconstrained Jev is still `operation` + `target_*` on generic pages. It no longer offers keystrokes.
 - Out of scope: TTS, Jev CLI, numbered overlays, OCR, autonomous send/book, stable DMG enablement.
 
 ---
@@ -110,11 +110,13 @@ swift test --filter 'VoiceControl|DictationFlowCoordinator|TransformRunSerialize
 
 | Check | Result |
 | --- | --- |
-| `swift test --filter VoiceControl` (2026-09-20 local, `aae51715`) | **113 tests, 0 failures** |
-| Dictation / Transform admission gate | **168 tests, 0 failures** on the combined filter |
+| `swift test --filter VoiceControl` (2026-09-20 local, Jarvis + a11y primitives) | **127 tests, 0 failures** |
+| Dictation / Transform admission gate | **182 tests, 0 failures** on the combined filter |
 | Overlay never enables Return; Search omitted from overlay Jev targets | covered |
 | Competing cities are an `outcome` Choice; unique Zürich stays local | covered |
-| Outcome-only Jev payload (no unconstrained `operation` / `key` heads) | covered |
+| Unconstrained Jev omits `key`; YouTube does not infer Return | covered |
+| Stale AX IDs rematch by unique label; origin field does not refill after ID refresh | covered |
+| `.selectedLabel` postcondition promotes a transition receipt | covered |
 | Results-page airport names stay `.plain` so Search can run | covered |
 | Date picker does not enable Return | covered |
 | `"replace with X"` clarifies instead of an invalid string range | covered |
@@ -133,6 +135,4 @@ Five earlier synthetic Jev text-only calls took **216–293 ms** (median **238 m
 
 ## Author's Notes
 
-The overlay and results-page fixes reconstruct stalls from fixtures and a recorded session. They are not a second live results run. A parallel checkout at `macparakeet-jev-pr` (`feat/jev-native-voice-control`) is an older `b6aabd10` snapshot and is not this PR.
-
-Follow-ups, not merge blockers: replace unconstrained `operation`/`key` with outcome kinds; wire `postcondition.holds` into the runner; live ZRH→LON and mic qualification.
+The overlay and results-page fixes reconstruct stalls from fixtures and a recorded session. They are not a second live results run. Numbered picks are a **panel text list**, not Apple “show numbers” overlays. Follow-ups, not merge blockers: replace unconstrained `operation`/`target_*` with outcome kinds on generic pages; live ZRH→LON and mic qualification.

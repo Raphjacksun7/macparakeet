@@ -10,6 +10,8 @@ final class VoiceControlCommandRouterTests: XCTestCase {
                 return XCTFail("Help is information, not a clarification or effect")
             }
             XCTAssertTrue(message.contains("Type hello"))
+            XCTAssertTrue(message.contains("Typing mode"))
+            XCTAssertTrue(message.contains("say the number"))
             XCTAssertTrue(message.contains("Replace old words"))
             XCTAssertTrue(message.contains("Stop"))
             XCTAssertFalse(message.contains("Scroll down"))
@@ -38,6 +40,32 @@ final class VoiceControlCommandRouterTests: XCTestCase {
         let text = "stop and click send. Keep ALL punctuation!"
         let result = try await router.decide(goal: "type " + text, snapshot: snapshot, history: [])
         XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: text)))
+    }
+    func testConsecutiveTypeUtterancesJoinWithASpace() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let result = try await router.decide(goal: "type world", snapshot: editable("hello"), history: [])
+        XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: " world")))
+    }
+    func testTypeUtteranceStartingWithPunctuationDoesNotInsertAJoiningSpace() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let result = try await router.decide(goal: "type , please", snapshot: editable("hello"), history: [])
+        XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: ", please")))
+    }
+    func testAmbiguousClickOffersNumberedPicksBoundToTargetIDs() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(id: "save-a", label: "Save", role: "button", operations: [.press]),
+                VoiceControlTarget(id: "save-b", label: "Save", role: "button", operations: [.press]),
+            ])
+        let result = try await router.decide(goal: "click Save", snapshot: snapshot, history: [])
+        guard case .pick(let prompt, let labels, let ids) = result else {
+            return XCTFail("Duplicate visible names must become a numbered local pick")
+        }
+        XCTAssertTrue(prompt.localizedStandardContains("Say the number"))
+        XCTAssertEqual(ids, ["save-a", "save-b"])
+        XCTAssertEqual(labels, ["Save (1)", "Save (2)"])
     }
     func testReplaceWithNoSourcePhraseAsksInsteadOfCrashing() async throws {
         let router = VoiceControlCommandRouter(fallback: MustNotDecide())
@@ -274,7 +302,9 @@ final class VoiceControlCommandRouterTests: XCTestCase {
                     operation: .setValue, targetID: "to", value: "London", receiptStatus: .verified),
             ])
         XCTAssertEqual(
-            result, .action(VoiceControlAction(operation: .key, targetID: "focus", value: "escape", consequence: .ordinary)))
+            result, .action(VoiceControlAction(
+                operation: .key, targetID: "focus", value: "escape", targetLabel: "Where else?",
+                consequence: .ordinary)))
     }
 
     func testFlightPlanPressesTheFocusedCitySuggestionDespiteDiacritics() async throws {
@@ -299,7 +329,9 @@ final class VoiceControlCommandRouterTests: XCTestCase {
                     operation: .setValue, targetID: "from", value: "Zurich", receiptStatus: .verified)
             ])
         XCTAssertEqual(
-            result, .action(VoiceControlAction(operation: .press, targetID: "city", targetLabel: "Zürich, Switzerland", consequence: .ordinary)))
+            result, .action(VoiceControlAction(
+                operation: .press, targetID: "city", targetLabel: "Zürich, Switzerland", consequence: .ordinary,
+                postcondition: .selectedLabel("Zürich, Switzerland"))))
     }
 
     func testFlightPlanEscapesAgainAfterFillingDateIfTheOverlayReturns() async throws {
@@ -328,7 +360,9 @@ final class VoiceControlCommandRouterTests: XCTestCase {
                     operation: .setValue, targetID: "date", value: "September 20 2026", receiptStatus: .verified),
             ])
         XCTAssertEqual(
-            result, .action(VoiceControlAction(operation: .key, targetID: "city", value: "escape", consequence: .ordinary)))
+            result, .action(VoiceControlAction(
+                operation: .key, targetID: "city", value: "escape", targetLabel: "Zürich, Switzerland",
+                consequence: .ordinary)))
     }
 
     func testFlightPlanDoesNotSearchUntilTheRequestedDateIsFilled() async throws {
@@ -356,6 +390,35 @@ final class VoiceControlCommandRouterTests: XCTestCase {
             ])
         let goals = await fallback.goals
         XCTAssertEqual(goals, ["Find one-way flights from Zurich to London on September 20 2026."])
+    }
+
+    func testFlightPlanDoesNotRefillOriginWhenTheFieldIDRefreshes() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "from-2", label: "Where from?", role: "AXComboBox", value: "Zurich",
+                    operations: [.setValue, .press, .key]),
+                VoiceControlTarget(
+                    id: "to", label: "Where to?", role: "AXComboBox",
+                    operations: [.setValue, .press, .key], isFocused: true),
+                VoiceControlTarget(
+                    id: "web:google-flights", label: "Google Flights", role: "url", operations: [.press],
+                    isNavigation: true),
+            ])
+        let result = try await router.decide(
+            goal: "Find one-way flights from Zurich to London on September 20 2026.", snapshot: snapshot,
+            history: [
+                VoiceControlAction(
+                    operation: .press, targetID: "web:google-flights", receiptStatus: .transitionObserved),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "from-1", value: "Zurich", targetLabel: "Where from?",
+                    receiptStatus: .verified),
+            ])
+        XCTAssertEqual(
+            result,
+            .action(VoiceControlAction(operation: .setValue, targetID: "to", value: "London", consequence: .ordinary)))
     }
 
     func testFlightPlanFillsTheDepartureDateWhenTheFieldIsVisible() async throws {
@@ -449,7 +512,9 @@ final class VoiceControlCommandRouterTests: XCTestCase {
                     operation: .setValue, targetID: "date", value: "September 20 2026", receiptStatus: .verified),
             ])
         XCTAssertEqual(
-            result, .action(VoiceControlAction(operation: .key, targetID: "city", value: "escape", consequence: .ordinary)))
+            result, .action(VoiceControlAction(
+                operation: .key, targetID: "city", value: "escape", targetLabel: "Zürich, Switzerland",
+                consequence: .ordinary)))
     }
 
     func testFlightPlanMovesFocusInsteadOfRepeatingEscapeOnAStuckOverlay() async throws {
@@ -510,7 +575,9 @@ final class VoiceControlCommandRouterTests: XCTestCase {
                 VoiceControlAction(
                     operation: .press, targetID: "day20",
                     targetLabel: "Sunday, September 20, 2026, departure date. , 276 US dollars",
-                    consequence: .ordinary)))
+                    consequence: .ordinary,
+                    postcondition: .selectedLabel(
+                        "Sunday, September 20, 2026, departure date. , 276 US dollars"))))
     }
 
     func testFlightPlanPressesSearchWhenThePageListsAirports() async throws {
@@ -567,6 +634,36 @@ final class VoiceControlCommandRouterTests: XCTestCase {
         XCTAssertEqual(
             result,
             .action(VoiceControlAction(operation: .setValue, targetID: "q", value: "the Apollo 11 documentary", consequence: .ordinary)))
+    }
+
+    func testYouTubeDoesNotInferReturnAfterFillingSearch() async throws {
+        let fallback = RecordingFallback()
+        let router = VoiceControlCommandRouter(fallback: fallback)
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "q", label: "Search", role: "AXComboBox", value: "the Apollo 11 documentary",
+                    operations: [.setValue, .press, .key], isFocused: true),
+                VoiceControlTarget(
+                    id: "s0", label: "Apollo 11 documentary — NASA", role: "AXStaticText", operations: [.press]),
+                VoiceControlTarget(
+                    id: "s1", label: "Apollo 11 documentary — BBC", role: "AXStaticText", operations: [.press]),
+                VoiceControlTarget(
+                    id: "web:youtube", label: "YouTube", role: "url", operations: [.press], isNavigation: true),
+            ])
+        let result = try await router.decide(
+            goal: "Play the Apollo 11 documentary on YouTube", snapshot: snapshot,
+            history: [
+                VoiceControlAction(operation: .press, targetID: "web:youtube", receiptStatus: .transitionObserved),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "q", value: "the Apollo 11 documentary",
+                    receiptStatus: .verified),
+            ])
+        XCTAssertEqual(result, .clarify("fallback"))
+        if case .action(let action) = result {
+            XCTAssertNotEqual(action.value, "return")
+        }
     }
 
     func testWebSearchFillsGoogle() async throws {
