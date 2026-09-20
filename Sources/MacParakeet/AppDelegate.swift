@@ -701,16 +701,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.transformsCoordinator?.resumeHotkeys()
                     }
                 },
+                onShortcutChanged: { [weak self] in self?.transformsCoordinator?.reloadBindings() },
                 isStartSuppressed: { [weak self] in self?.onboardingWindowController.isVisible ?? true },
                 conflictingHotkeys: { [weak self] in
                     guard let self else { return [] }
+                    let transforms = (try? env.promptRepo.fetchVisible(category: .transform)) ?? []
                     return [self.settingsViewModel.hotkeyTrigger, self.settingsViewModel.pushToTalkHotkeyTrigger,
                             self.settingsViewModel.meetingHotkeyTrigger, self.settingsViewModel.fileTranscriptionHotkeyTrigger,
                             self.settingsViewModel.youtubeTranscriptionHotkeyTrigger]
+                        + transforms.compactMap { $0.shortcut?.hotkeyTrigger }
                 }
             )
             voiceControlCoordinator = control
             menuBarCoordinator.onVoiceControl = { [weak control] in control?.show() }
+            menuBarCoordinator.onInteractionBusy = { [weak control] in control?.explainInteractionBusy() }
+            dictationFlowCoordinator?.onInteractionBusy = { [weak control] in control?.explainInteractionBusy() }
             control.installHotkey()
         }
 

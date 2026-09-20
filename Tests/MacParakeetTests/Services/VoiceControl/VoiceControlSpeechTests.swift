@@ -1,5 +1,7 @@
 import XCTest
 @testable import MacParakeetCore
+@testable import MacParakeetViewModels
+@testable import MacParakeet
 
 final class VoiceControlSpeechTests: XCTestCase {
     func testSilenceNeverCommitsAnUtterance() {
@@ -47,6 +49,7 @@ final class VoiceControlSpeechTests: XCTestCase {
 private actor VoiceControlTestAudio: AudioProcessorProtocol {
     let url: URL
     var isRecording = false
+    var sink: DictationAudioSampleSink?
     var audioLevel: Float { 0 }
     var recordingDeviceInfo: RecordingDeviceInfo? { nil }
     init() throws {
@@ -55,13 +58,22 @@ private actor VoiceControlTestAudio: AudioProcessorProtocol {
     }
     func convert(fileURL: URL) async throws -> URL { fileURL }
     func startCapture() async throws { isRecording = true }
+    func startCapture(sampleSink: DictationAudioSampleSink?) async throws { sink = sampleSink; isRecording = true }
+    func emit(_ samples: [Float]) { sink?.onSamples(samples) }
     func stopCapture() async throws -> URL { isRecording = false; return url }
 }
 
 private actor VoiceControlTestSTT: STTTranscribing {
     var jobs: [STTJobKind] = []
-    func transcribe(audioPath: String, job: STTJobKind, onProgress: (@Sendable (Int, Int) -> Void)?) async throws -> STTResult {
+    var shouldWait = false
+    var waiting: CheckedContinuation<Void, Never>?
+    func setWait() { shouldWait = true }
+    func release() { waiting?.resume(); waiting = nil }
+    func transcribe(audioPath: String, job: STTJobKind, onProgress: (@Sendable (Int, Int) -> Void)?) async throws
+        -> STTResult
+    {
         jobs.append(job)
+        if shouldWait { await withCheckedContinuation { waiting = $0 } }
         return STTResult(text: "type um, DO NOT expand this snippet")
     }
 }
@@ -74,8 +86,9 @@ extension VoiceControlSpeechTests {
         let events = session.events
         let collector = Task<String?, Never> {
             for await event in events {
-                if case .transcript(let text) = event { return text }
+                if case .transcript(let text, _, _) = event { return text }
                 if case .failed = event { return nil }
+                if case .stopped = event { return nil }
             }
             return nil
         }
@@ -96,5 +109,110 @@ extension VoiceControlSpeechTests {
         let jobs = await stt.jobs
         XCTAssertTrue(jobs.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: audio.url.path))
+    }
+}
+
+extension VoiceControlSpeechTests {
+    @MainActor func testSpeechCapturePreservesPendingConfirmation() {
+        let model = VoiceControlViewModel()
+        let action = VoiceControlAction(operation: .press, targetID: "send")
+        model.apply(.confirmation(action, "Send this message?"))
+        XCTAssertFalse(model.conversation.shouldPauseForSpeech)
+        model.phase = .listening
+        XCTAssertTrue(model.conversation.takeConfirmation())
+        XCTAssertFalse(model.conversation.takeConfirmation(), "Confirmation can only be consumed once")
+    }
+    @MainActor func testPhysicalStopClearsPendingResponse() {
+        let model = VoiceControlViewModel()
+        model.apply(.confirmation(VoiceControlAction(operation: .press, targetID: "send"), "Send?"))
+        model.conversation.cancel()
+        XCTAssertFalse(model.conversation.takeConfirmation())
+        XCTAssertTrue(model.conversation.shouldPauseForSpeech)
+    }
+    @MainActor func testClarificationSurvivesVisibleListeningPhase() {
+        let model = VoiceControlViewModel()
+        model.apply(.clarification("Which Save button?"))
+        model.phase = .listening
+        XCTAssertFalse(model.conversation.shouldPauseForSpeech)
+        XCTAssertTrue(model.conversation.takeClarification())
+        XCTAssertTrue(model.conversation.shouldPauseForSpeech)
+    }
+}
+
+extension VoiceControlSpeechTests {
+    func testStopDiscardsLateAuthoritativeResultEvenIfSTTIgnoresCancellation() async throws {
+        let audio = try VoiceControlTestAudio()
+        let stt = VoiceControlTestSTT()
+        await stt.setWait()
+        let session = VoiceControlSpeechSession(audio: audio, stt: stt)
+        let events = session.events
+        let collector = Task<Bool, Never> {
+            for await event in events {
+                if case .transcript = event { return true }
+                if case .stopped = event { return false }
+            }
+            return false
+        }
+        try await session.begin(handsFree: false)
+        let commit = Task { await session.commit() }
+        for _ in 0..<10_000 {
+            if await stt.waiting != nil { break }
+            await Task.yield()
+        }
+        let didStart = await stt.waiting != nil
+        XCTAssertTrue(didStart)
+        await session.discardPendingUtterance()
+        await stt.release()
+        await commit.value
+        let emitted = await collector.value
+        XCTAssertFalse(emitted, "A final arriving after Stop must never become another command")
+    }
+    func testHandsFreeFinishDoesNotReplayPriorCommandsFromSessionRecording() async throws {
+        let audio = try VoiceControlTestAudio()
+        let stt = VoiceControlTestSTT()
+        let session = VoiceControlSpeechSession(audio: audio, stt: stt)
+        let events = session.events
+        let first = Task {
+            for await event in events {
+                if case .transcript = event { return }
+            }
+        }
+        try await session.begin(handsFree: true)
+        for _ in 0..<2 { await audio.emit(Array(repeating: 0.1, count: 1600)) }
+        for _ in 0..<9 { await audio.emit(Array(repeating: 0, count: 1600)) }
+        await first.value
+        await session.commit()
+        let jobs = await stt.jobs
+        XCTAssertEqual(jobs.count, 1, "Finish speaking must not transcribe the whole rolling session again")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio.url.path))
+    }
+}
+
+extension VoiceControlSpeechTests {
+    @MainActor func testLiteralModePreservesEscapePrefixAndPayload() {
+        XCTAssertEqual(VoiceControlCoordinator.literalInstruction("type literally hello"), "type literally hello")
+        XCTAssertEqual(
+            VoiceControlCoordinator.literalInstruction("type literally command mode"), "type literally command mode")
+        XCTAssertEqual(VoiceControlCoordinator.literalInstruction("stop listening"), "type stop listening")
+        XCTAssertEqual(VoiceControlCoordinator.literalInstruction("um, not two"), "type um, not two")
+    }
+}
+
+extension VoiceControlSpeechTests {
+    func testPhysicalStopRevokesQueuedSpeechBeforeActorCleanupRuns() {
+        let fence = VoiceControlSpeechRevocation()
+        let queuedUtterance = UUID()
+        fence.beginCapture(utterance: queuedUtterance)
+        XCTAssertTrue(fence.accepts(queuedUtterance))
+        fence.revoke()
+        XCTAssertFalse(fence.accepts(queuedUtterance), "A queued speechBegan or final cannot revive this utterance")
+        let remainder = UUID()
+        XCTAssertFalse(fence.beginUtterance(remainder), "Remaining stopped speech cannot re-arm listening")
+        XCTAssertFalse(fence.accepts(remainder))
+        fence.rearmAfterSilence()
+        let next = UUID()
+        XCTAssertTrue(fence.beginUtterance(next))
+        XCTAssertTrue(fence.accepts(next))
+        XCTAssertFalse(fence.accepts(queuedUtterance))
     }
 }

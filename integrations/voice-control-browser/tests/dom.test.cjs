@@ -10,6 +10,7 @@ const http = require('node:http');
     const page = await browser.newPage();
     await page.goto('http://127.0.0.1:'+server.address().port);
     await page.setContent(`<label>Name <input id="name" value="Before"></label>
+      <label>Card <input id="card" autocomplete="cc-number" value="PAYMENT_NEVER_TRANSPORT"></label>
       <label>Password <input id="password" type="password" value="NEVER_TRANSPORT"></label>
       <label>Trip <select id="trip"><option>Round trip</option><option>One way</option></select></label>
       <button id="send">Send</button><div style="height:2000px">Visible evidence</div>`);
@@ -24,6 +25,7 @@ const http = require('node:http');
     let observed = await request('observe');
     assert.equal(observed.ok,true);
     assert(!JSON.stringify(observed).includes('NEVER_TRANSPORT'));
+    assert(!observed.payload.targets.some(t => t.label === 'Card'));
     assert(!observed.payload.targets.some(t => t.label.includes('Password')));
     const name = observed.payload.targets.find(t => t.label === 'Name');
     assert(name);
@@ -41,7 +43,23 @@ const http = require('node:http');
     result = await request('execute',{snapshotID:observed.payload.id,action:{operation:'select',targetID:option.id}});
     assert.equal(result.payload.status,'verified');
     assert.equal(await page.locator('#trip').inputValue(),'One way');
+    await page.locator('#send').evaluate(node => node.onclick = () => {
+      const menu = document.createElement('button'); menu.textContent = 'Dynamic next option'; document.body.prepend(menu);
+      node.setAttribute('aria-expanded','true');
+    });
     observed = await request('observe');
+    result = await request('execute',{snapshotID:observed.payload.id,action:{operation:'press',targetID:observed.payload.targets.find(t => t.label === 'Send').id}});
+    assert.equal(result.payload.status,'transitionObserved');
+    observed = await request('observe');
+    assert(observed.payload.targets.some(t => t.label === 'Dynamic next option'));
+    await page.locator('#name').evaluate(node => {node.value='x'.repeat(2100);node.focus();node.select();});
+    observed = await request('observe');
+    const longField = observed.payload.targets.find(t => t.label === 'Name');
+    assert.equal(longField.valueIsComplete,false);
+    assert.equal(longField.selectedText,null);
+    await page.locator('#password').evaluate(node => Object.defineProperty(node,'value',{get(){throw Error('Secure value read');}}));
+    observed = await request('observe');
+    assert.equal(observed.ok,true);
     await page.locator('#send').evaluate(node => node.remove());
     result = await request('execute',{snapshotID:observed.payload.id,action:{operation:'press',targetID:observed.payload.targets.find(t => t.label === 'Send').id}});
     assert.equal(result.ok,false);
@@ -57,6 +75,11 @@ const http = require('node:http');
     assert.equal(expired.ok,false);
     const wrongDocument = await page.evaluate(() => request({type:'observe',contextID:'context',documentID:'wrong',expiresAt:Date.now()+1000}));
     assert.equal(wrongDocument.ok,false);
-    console.log('PASS: secure values, exact fill, consume-once, stale value, select, removed target, occlusion, expiry, document identity');
+    await page.evaluate(() => window.scrollTo(0,600));
+    observed = await request('observe');
+    result = await request('execute',{snapshotID:observed.payload.id,action:{operation:'scroll',targetID:'scroll:down',value:'up'}});
+    assert.equal(result.payload.status,'verified');
+    assert(await page.evaluate(() => scrollY) < 600);
+    console.log('PASS: secure values, exact fill, consume-once, stale value, select, removed target, occlusion, expiry, document identity, dynamic transition, long selection omission, secure getter exclusion, payment exclusion, scroll argument direction');
   } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); process.exitCode=1; });

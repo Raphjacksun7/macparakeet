@@ -17,6 +17,15 @@ public actor VoiceControlTurnRunner {
     private var dispatched = 0
     private var hasUnverifiedEffect = false
     private var taskStarted = Date()
+    private struct DispatchIdentity: Hashable {
+        let context: String
+        let prestate: [String]
+        let summary: String
+        let operation: VoiceControlOperation
+        let label: String
+        let value: String?
+    }
+    private var dispatchedStates: Set<DispatchIdentity> = []
 
     public init(adapter: any VoiceControlAdapter, engine: any VoiceControlDecisionEngine) {
         self.adapter = adapter; self.engine = engine
@@ -30,6 +39,13 @@ public actor VoiceControlTurnRunner {
         stop(); submissionID = UUID(); goal = ""; history = []; pending = nil; cancelled = true
         continuation.yield(.cancelled)
     }
+    /// Return only after an already-dispatched effect has returned. UI ownership
+    /// must remain held until this finishes, even though revocation is immediate.
+    public func cancelAndDrain() async {
+        cancel()
+        if running { await withCheckedContinuation { stoppedWaiters.append($0) } }
+    }
+
     public func submit(_ goal: String) async {
         stop()
         let id = UUID()
@@ -37,20 +53,23 @@ public actor VoiceControlTurnRunner {
         if running { await withCheckedContinuation { stoppedWaiters.append($0) } }
         guard submissionID == id else { return }
         self.goal = goal; history = []; pending = nil; cancelled = false
-        requests = 0; dispatched = 0; hasUnverifiedEffect = false; taskStarted = Date()
+        requests = 0; dispatched = 0; dispatchedStates = []; hasUnverifiedEffect = false; taskStarted = Date()
         await run()
     }
     public func resume() async {
         guard !goal.isEmpty, !running else { return }
         guard !hasUnverifiedEffect else {
-            continuation.yield(.paused("The last action is uncertain. Check the app and give a new instruction.")); return
+            continuation.yield(.paused("The last action is uncertain. Check the app and give a new instruction."));
+            return
         }
         pending = nil; await run()
     }
     public func confirm() async {
         guard !running, let (action, snapshot, created, pendingAuthority) = pending else { return }
         pending = nil
-        guard pendingAuthority.isValid, dispatched < 12, Date().timeIntervalSince(taskStarted) < 60, Date().timeIntervalSince(created) < 20 else {
+        guard pendingAuthority.isValid, dispatched < 12, Date().timeIntervalSince(taskStarted) < 60,
+            Date().timeIntervalSince(created) < 20
+        else {
             continuation.yield(.paused("Confirmation expired. Repeat your request.")); return
         }
         // Adapter must revalidate the exact snapshot and bound target at dispatch.
@@ -58,30 +77,62 @@ public actor VoiceControlTurnRunner {
         let authority = pendingAuthority
         do {
             try authority.check()
+            guard registerDispatch(action, snapshot: snapshot) else {
+                markStopped();
+                continuation.yield(.paused("That action already ran against this interface. Give a new instruction."));
+                return
+            }
             dispatched += 1
             hasUnverifiedEffect = true
             let receipt = try await adapter.execute(action: action, snapshot: snapshot, authority: authority)
-            guard authority.isValid, !cancelled else { markStopped(); continuation.yield(.paused("Stopped.")); return }
-            guard receipt.status == .verified else {
-                markStopped(); continuation.yield(.paused("The action could not be verified. Check the app before continuing.")); return
+            guard authority.isValid, !cancelled else {
+                markStopped(); if !cancelled { continuation.yield(.paused("Stopped.")) }; return
+            }
+            guard receipt.status == .verified || receipt.status == .transitionObserved else {
+                markStopped();
+                continuation.yield(.paused("The action could not be verified. Check the app before continuing."));
+                return
             }
             hasUnverifiedEffect = false
-            history.append(VoiceControlAction(operation: action.operation, targetID: action.targetID, value: action.value, targetLabel: snapshot.targets.first { $0.id == action.targetID }?.label)); running = false
+            history.append(
+                VoiceControlAction(
+                    operation: action.operation, targetID: action.targetID, value: action.value,
+                    targetLabel: snapshot.targets.first { $0.id == action.targetID }?.label,
+                    receiptStatus: receipt.status));
+            running = false
             await run()
-        } catch { markStopped(); continuation.yield(.paused("The app changed or the action stopped. Repeat your request.")) }
+        } catch {
+            markStopped();
+            if !cancelled { continuation.yield(.paused("The app changed or the action stopped. Repeat your request.")) }
+        }
     }
 
     public func clarify(_ answer: String) async {
         guard !running, !goal.isEmpty else { return }
         guard !hasUnverifiedEffect else {
-            continuation.yield(.paused("The last action is uncertain. Check the app and give a new instruction.")); return
+            continuation.yield(.paused("The last action is uncertain. Check the app and give a new instruction."));
+            return
         }
         goal += "\nUser clarification: " + answer
         await run()
     }
 
     private static func semanticTargets(_ snapshot: VoiceControlSnapshot) -> [String] {
-        snapshot.targets.map { "\($0.role)|\($0.label)|\($0.value ?? "")|\($0.operations.map(\.rawValue).sorted().joined(separator: ","))" }
+        snapshot.targets.map {
+            "\($0.role)|\($0.label)|\($0.value ?? "")|\($0.isFocused)|\($0.selectedText ?? "")|\($0.operations.map(\.rawValue).sorted().joined(separator: ","))"
+        }.sorted()
+    }
+
+    private func dispatchIdentity(_ action: VoiceControlAction, snapshot: VoiceControlSnapshot) -> DispatchIdentity {
+        DispatchIdentity(
+            context: snapshot.contextID, prestate: Self.semanticTargets(snapshot), summary: snapshot.summary,
+            operation: action.operation,
+            label: snapshot.targets.first(where: { $0.id == action.targetID })?.label ?? action.targetID,
+            value: action.value)
+    }
+
+    private func registerDispatch(_ action: VoiceControlAction, snapshot: VoiceControlSnapshot) -> Bool {
+        dispatchedStates.insert(dispatchIdentity(action, snapshot: snapshot)).inserted
     }
 
     private func markStopped() {
@@ -101,14 +152,23 @@ public actor VoiceControlTurnRunner {
         do {
             while authority.isValid, !cancelled {
                 guard dispatched < 12, requests < 30, Date().timeIntervalSince(taskStarted) < 60 else {
-                    continuation.yield(.paused("Task limit reached. Check the app and give the next instruction.")); return
+                    continuation.yield(.paused("Task limit reached. Check the app and give the next instruction."));
+                    return
                 }
                 continuation.yield(.observing)
                 let snapshot = try await adapter.observe()
                 try authority.check()
                 if let previous, previous.contextID == snapshot.contextID,
-                   Self.semanticTargets(previous) == Self.semanticTargets(snapshot), previous.summary == snapshot.summary { noProgress += 1 } else { noProgress = 0 }
-                guard noProgress < 2 else { continuation.yield(.paused("The app is not changing. Please check it before continuing.")); return }
+                    Self.semanticTargets(previous) == Self.semanticTargets(snapshot),
+                    previous.summary == snapshot.summary
+                {
+                    noProgress += 1
+                } else {
+                    noProgress = 0
+                }
+                guard noProgress < 2 else {
+                    continuation.yield(.paused("The app is not changing. Please check it before continuing.")); return
+                }
                 previous = snapshot
                 continuation.yield(.deciding)
                 requests += 1
@@ -118,41 +178,76 @@ public actor VoiceControlTurnRunner {
                     continuation.yield(.paused("Task limit reached. Give the next instruction.")); return
                 }
                 switch decision {
+                case .information(let message):
+                    continuation.yield(.completed(message)); return
+                case .directCompleted(let message):
+                    guard history.last?.receiptStatus == .verified else {
+                        continuation.yield(
+                            .paused("The requested effect has not been verified. Please check the app."));
+                        return
+                    }
+                    continuation.yield(.completed(message)); return
                 case .finished:
                     guard snapshot.isComplete else {
-                        continuation.yield(.paused("Only part of the interface is visible. Please check whether the task is complete.")); return
+                        continuation.yield(
+                            .paused("Only part of the interface is visible. Please check whether the task is complete.")
+                        ); return
                     }
                     continuation.yield(.completed("The task appears complete. Check the result in the app.")); return
                 case .clarify(let question):
                     continuation.yield(.clarification(question)); return
                 case .action(let action):
                     guard let target = snapshot.targets.first(where: { $0.id == action.targetID }),
-                          target.operations.contains(action.operation) else {
+                        target.operations.contains(action.operation)
+                    else {
                         continuation.yield(.failed("The requested control is no longer available.")); return
                     }
-                    if action.requiresConfirmation || action.operation == .press && !target.isNavigation || action.operation == .key {
+                    guard !dispatchedStates.contains(dispatchIdentity(action, snapshot: snapshot)) else {
+                        continuation.yield(
+                            .paused("That action already ran against this interface. Give a new instruction."));
+                        return
+                    }
+                    if action.requiresConfirmation || action.operation == .press && !target.isNavigation
+                        || action.operation == .key
+                    {
                         pending = (action, snapshot, Date(), authority)
-                        continuation.yield(.confirmation(action, "Allow \(action.operation.rawValue) on \(target.label)?" + (action.requiresConfirmation ? "\n" + String((action.value ?? "").prefix(1_000)) : ""))); return
+                        continuation.yield(
+                            .confirmation(
+                                action,
+                                "Allow \(action.operation.rawValue) on \(target.label)?"
+                                    + (action.requiresConfirmation
+                                        ? "\n" + String((action.value ?? "").prefix(1_000)) : "")));
+                        return
                     }
                     continuation.yield(.acting(action))
+                    guard registerDispatch(action, snapshot: snapshot) else { return }
                     dispatched += 1
                     hasUnverifiedEffect = true
                     let receipt = try await adapter.execute(action: action, snapshot: snapshot, authority: authority)
                     try authority.check()
-                    guard receipt.status == .verified else {
-                        continuation.yield(.paused("The action could not be verified. Check the app before continuing.")); return
+                    guard receipt.status == .verified || receipt.status == .transitionObserved else {
+                        continuation.yield(
+                            .paused("The action could not be verified. Check the app before continuing."));
+                        return
                     }
                     hasUnverifiedEffect = false
-                    history.append(VoiceControlAction(operation: action.operation, targetID: action.targetID, value: action.value, targetLabel: snapshot.targets.first { $0.id == action.targetID }?.label))
+                    history.append(
+                        VoiceControlAction(
+                            operation: action.operation, targetID: action.targetID, value: action.value,
+                            targetLabel: snapshot.targets.first { $0.id == action.targetID }?.label,
+                            receiptStatus: receipt.status))
                 }
             }
             if !cancelled { continuation.yield(.paused("Stopped.")) }
         } catch is CancellationError {
             if !cancelled { continuation.yield(.paused("Stopped.")) }
         } catch let error as JevDecisionError {
-            continuation.yield(.failed(error.localizedDescription))
+            if !cancelled { continuation.yield(.failed(error.localizedDescription)) }
         } catch {
-            continuation.yield(.failed("Voice Control could not continue. Check the connection and app permissions."))
+            if !cancelled {
+                continuation.yield(
+                    .failed("Voice Control could not continue. Check the connection and app permissions."))
+            }
         }
     }
 }

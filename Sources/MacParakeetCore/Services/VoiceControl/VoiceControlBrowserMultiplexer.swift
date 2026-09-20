@@ -30,8 +30,10 @@ public actor VoiceControlBrowserMultiplexer: VoiceControlAdapter {
         snapshots = [snapshot.id: selected]
         return snapshot
     }
-    public func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot,
-                        authority: ActionAuthority) async throws -> VoiceControlReceipt {
+    public func execute(
+        action: VoiceControlAction, snapshot: VoiceControlSnapshot,
+        authority: ActionAuthority
+    ) async throws -> VoiceControlReceipt {
         guard let selected = snapshots.removeValue(forKey: snapshot.id) else {
             throw VoiceControlBrowserAdapter.BridgeError.remoteFailure
         }

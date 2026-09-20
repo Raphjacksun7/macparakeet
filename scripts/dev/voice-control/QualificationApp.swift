@@ -9,7 +9,8 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     var result = NSTextField(labelWithString: "No search yet")
     var oneWay = NSButton(checkboxWithTitle: "One way", target: nil, action: nil)
     func applicationDidFinishLaunching(_ notification: Notification) {
-        window = NSWindow(contentRect: NSRect(x: 180, y: 180, width: 620, height: 400),
+        window = NSWindow(
+            contentRect: NSRect(x: 180, y: 180, width: 620, height: 400),
             styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Voice Control — disposable flight search"
         let stack = NSStackView(); stack.orientation = .vertical; stack.spacing = 16
@@ -31,12 +32,15 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         let note = NSTextField(labelWithString: "Synthetic fixture. No booking, payment, or real flight data.")
         note.textColor = .secondaryLabelColor; stack.addArrangedSubview(note)
         window.contentView!.addSubview(stack)
-        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 36),
-                                     stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 32)])
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 36),
+            stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 32),
+        ])
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
     @objc func searchFlights() {
-        result.stringValue = "Results: \(origin.stringValue) → \(destination.stringValue), \(date.stringValue), \(oneWay.state == .on ? "one way" : "return")"
+        result.stringValue =
+            "Results: \(origin.stringValue) → \(destination.stringValue), \(date.stringValue), \(oneWay.state == .on ? "one way" : "return")"
         result.setAccessibilityLabel(result.stringValue)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

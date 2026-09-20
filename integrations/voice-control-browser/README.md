@@ -4,15 +4,19 @@ This optional Chromium Manifest V3 extension connects an explicitly chosen tab t
 
 ## Setup
 
-1. Build `swift build --product macparakeet-browser-host` from this checkout. The app must also include Voice Control support.
-2. Open Chrome's extensions page, enable Developer mode, and choose **Load unpacked** for this directory's `extension/` folder. Copy its extension ID.
-3. Run `python3 integrations/voice-control-browser/install.py --extension-id YOUR_EXTENSION_ID --host /absolute/path/to/macparakeet-browser-host`. Optional `--browser chromium` or `--browser chrome-for-testing` changes the user-scoped native-host manifest location. This explicit installation creates a private pairing configuration; it does not start or restart a browser.
-4. Enable Voice Control in MacParakeet. Open the extension popup in the intended tab and choose **Connect this tab**.
+The dev and distribution app builders embed `macparakeet-browser-host` in `Contents/MacOS` and the unpacked extension in `Contents/Resources/VoiceControlBrowser`. Distribution signing already signs every auxiliary executable in `Contents/MacOS`. No helper starts merely because it is bundled.
+
+1. Open **Voice Control → Setup** in a complete MacParakeet build. Choose **Open extension folder**.
+2. Open the browser's extensions page, enable Developer mode, and choose **Load unpacked** for that folder. Copy the resulting extension ID.
+3. Return to Voice Control setup, select the matching browser, enter its exact extension ID, and register it. Registration writes only user-scoped files; it never launches or restarts the browser. An explicit **Replace existing pairing** choice is required to change a different paired extension.
+4. Enable the browser bridge in Voice Control. Open the extension popup in the intended tab and choose **Connect this tab**.
 5. Use the native Voice Control UI. **Disconnect** in the extension ends browser authorization. Selecting another tab or navigating to a different origin disconnects. Same-origin navigation invalidates old observations and binds the new document automatically.
 
-The installer intentionally preserves an existing pairing/host manifest instead of overwriting it. To change extension installations, stop the bridge and explicitly replace the old pairing and native-host registration. After an abnormal app termination, a stale `bridge.sock` may remain in `~/Library/Application Support/MacParakeet/VoiceControlBrowser/`; verify no bridge app is running before removing that socket. A live socket is never unlinked automatically, protecting parallel worktrees.
+Registration keeps the secret in a private mode-0600 file, checks ownership and symlinks, stages both files before publishing, and holds the same exclusive lock as the running bridge. Disconnect the bridge before reconfiguration. A repeated registration for the same extension preserves its secret and updates the owned native-host executable path when the app moves. An unrelated registration is preserved even when replacement is selected.
 
-This is an unpacked developer installation. Chrome Web Store publication, stable extension-ID provisioning, signed bundle embedding, and automatic host registration during packaged-app setup require release integration; this directory does not imply those distribution steps have happened.
+This removes terminal-only setup, but still uses an unpacked extension. Chrome Web Store publication, a stable published extension ID, and compatibility qualification across browser channels remain separate release work. Loading the extension from an app bundle requires keeping that app at its registered location; repeat registration after moving it.
+
+For developer automation, build `swift build --product macparakeet-browser-host` and run `python3 integrations/voice-control-browser/install.py --extension-id YOUR_EXTENSION_ID --host /absolute/path/to/macparakeet-browser-host`. Optional `--browser chromium` or `--browser chrome-for-testing` changes the registration directory. `--user-data-dir` supports an explicit disposable/custom browser profile. The script preserves existing configuration; the native setup UI owns deliberate replacement. After an abnormal termination, the app recovers only an owned private stale socket whose listener refuses connections. An exclusive bridge lock and file identity checks protect live listeners and parallel worktrees. Symlinks, nonowned paths, and regular files are never unlinked.
 
 ## Protocol and authority
 
@@ -24,7 +28,7 @@ The extension explicitly sends `authorize` with a context comprising its profile
 
 Execution requires a current observation UUID and an offered target/operation. The isolated content script consumes the observation before effects, retains the actual DOM node, and rechecks connection, semantic fingerprint, value/selection, enabled state, visibility, and occlusion. Secure/password/file/hidden/one-time-code fields are excluded before value reads. Observations carry explicit completeness and text-truncation flags. No page `postMessage` channel exists.
 
-The native authority check is serialized with socket dispatch. An already dispatched remote effect cannot be unsent by Stop. Remote execution expires after 750 ms; cancellation sends revocation, and missing acknowledgements produce an **unknown** receipt rather than a retry. This boundary must be reflected in the UI. Browser press effects without independently observable state change also report **unknown**; the engine decides how to inspect/continue without blindly repeating.
+The native authority check is serialized with socket dispatch. An already dispatched remote effect cannot be unsent by Stop. Remote execution expires after 750 ms; cancellation sends revocation, and missing acknowledgements produce an **unknown** receipt rather than a retry. This boundary must be reflected in the UI. Browser presses with a meaningful observed control/dialog/status/navigation change return **transitionObserved**, allowing a new observation without claiming task success. Presses with no such evidence return **unknown** and pause rather than repeat.
 
 ## Supported operations and limits
 
@@ -47,3 +51,6 @@ swift test --filter VoiceControlBrowserWireTests
 ```
 
 The DOM script defaults to an installed Chrome channel. `PLAYWRIGHT_CHANNEL` changes the channel; `PLAYWRIGHT_MODULE` can name an existing Playwright module path without modifying the repository's dependencies. Framing tests cover ordered frame boundaries, oversized headers/output, empty frames, and partial-frame EOF. Keep native-host stdout exclusively framed; diagnostics belong on stderr and must omit page content.
+
+
+The end-to-end synthetic fixture is `tests/live-browser.test.cjs`, with its exact-production-source Swift driver in `tests/BrowserQualification.swift`. It requires `MACPARAKEET_BROWSER_FIXTURE_QUALIFICATION=1`, `JEV_API_KEY`, and `BROWSER_QUALIFICATION_BINARY`; `BROWSER_HOST_BINARY` defaults to the debug product. `CHROMIUM_EXECUTABLE` can choose a locally installed Chrome for Testing. It records real execution video and a machine-readable evidence manifest. The test adds loopback-only host permission to a disposable manifest copy because programmatic popup interaction lacks a real toolbar user gesture; this is not a qualification of production activeTab consent. It never overwrites existing user pairing. See the [dated evidence report](../../docs/research/2026-09-19-jev-voice-control/browser-implementation-evidence.md) for measured results and limitations.

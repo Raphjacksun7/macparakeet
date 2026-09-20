@@ -141,6 +141,7 @@ final class DictationFlowCoordinator {
 
     /// Set after init; updated when dictation hotkey managers are recreated.
     var hotkeyManagers: [HotkeyManager] = []
+    var onInteractionBusy: (() -> Void)?
 
     // MARK: - Dependencies
 
@@ -376,9 +377,9 @@ final class DictationFlowCoordinator {
     ) {
         // Suppressed while onboarding is up — the speech model isn't ready and
         // the hotkey step runs its own no-STT rehearsal. Covers hotkey + pill.
-        guard !isStartSuppressed(), foregroundInsertions == 0 else { return }
+        guard !isStartSuppressed() else { return }
         if interactionLease == nil {
-            guard let lease = mutationArbiter.acquire(.dictation) else { return }
+            guard let lease = mutationArbiter.acquire(.dictation) else { onInteractionBusy?(); return }
             interactionLease = lease
         }
         currentTrigger = trigger
@@ -433,7 +434,7 @@ final class DictationFlowCoordinator {
         executeEffects(effects)
 
         switch stateMachine.state {
-        case .idle, .ready, .finishing, .cancelCountdown:
+        case .idle, .ready, .finishing:
             if foregroundInsertions == 0, let interactionLease {
                 mutationArbiter.release(interactionLease)
                 self.interactionLease = nil
@@ -682,9 +683,13 @@ final class DictationFlowCoordinator {
             let work = { @MainActor in
                 defer {
                     self.foregroundInsertions -= 1
-                    if self.foregroundInsertions == 0, let lease = self.interactionLease {
-                        self.mutationArbiter.release(lease)
-                        self.interactionLease = nil
+                    switch self.stateMachine.state {
+                    case .idle, .ready, .finishing:
+                        if self.foregroundInsertions == 0, let lease = self.interactionLease {
+                            self.mutationArbiter.release(lease)
+                            self.interactionLease = nil
+                        }
+                    default: break
                     }
                 }
                 var completedDictation = dictation

@@ -15,9 +15,11 @@ public struct VoiceControlTarget: Codable, Sendable, Equatable, Identifiable {
     public let isFocused: Bool
     public let selectedText: String?
     public let valueIsComplete: Bool
-    public init(id: String, label: String, role: String, value: String? = nil,
-                operations: Set<VoiceControlOperation>, isNavigation: Bool = false,
-                isFocused: Bool = false, selectedText: String? = nil, valueIsComplete: Bool = true) {
+    public init(
+        id: String, label: String, role: String, value: String? = nil,
+        operations: Set<VoiceControlOperation>, isNavigation: Bool = false,
+        isFocused: Bool = false, selectedText: String? = nil, valueIsComplete: Bool = true
+    ) {
         self.id = id; self.label = label; self.role = role; self.value = value
         self.operations = operations; self.isNavigation = isNavigation
         self.isFocused = isFocused; self.selectedText = selectedText; self.valueIsComplete = valueIsComplete
@@ -31,8 +33,10 @@ public struct VoiceControlSnapshot: Codable, Sendable, Equatable {
     public let targets: [VoiceControlTarget]
     public let summary: String
     public let isComplete: Bool
-    public init(id: UUID = UUID(), contextID: String, applicationName: String,
-                targets: [VoiceControlTarget], summary: String = "", isComplete: Bool = true) {
+    public init(
+        id: UUID = UUID(), contextID: String, applicationName: String,
+        targets: [VoiceControlTarget], summary: String = "", isComplete: Bool = true
+    ) {
         self.id = id; self.contextID = contextID; self.applicationName = applicationName
         self.targets = targets; self.summary = summary; self.isComplete = isComplete
     }
@@ -45,8 +49,14 @@ public struct VoiceControlAction: Codable, Sendable, Equatable {
     public let value: String?
     public let targetLabel: String?
     public let requiresConfirmation: Bool
-    public init(operation: VoiceControlOperation, targetID: String, value: String? = nil, targetLabel: String? = nil, requiresConfirmation: Bool = false) {
-        self.operation = operation; self.targetID = targetID; self.value = value; self.targetLabel = targetLabel; self.requiresConfirmation = requiresConfirmation
+    /// Populated only in executed history; a transition is not verified goal success.
+    public let receiptStatus: VoiceControlReceipt.Status?
+    public init(
+        operation: VoiceControlOperation, targetID: String, value: String? = nil, targetLabel: String? = nil,
+        requiresConfirmation: Bool = false, receiptStatus: VoiceControlReceipt.Status? = nil
+    ) {
+        self.operation = operation; self.targetID = targetID; self.value = value; self.targetLabel = targetLabel;
+        self.requiresConfirmation = requiresConfirmation; self.receiptStatus = receiptStatus
     }
 }
 
@@ -67,7 +77,7 @@ public final class ActionAuthority: @unchecked Sendable {
 }
 
 public struct VoiceControlReceipt: Sendable, Equatable {
-    public enum Status: String, Sendable { case verified, unknown, failed }
+    public enum Status: String, Codable, Sendable { case verified, transitionObserved, unknown, failed }
     public let status: Status
     public let message: String
     public init(status: Status, message: String = "") { self.status = status; self.message = message }
@@ -75,8 +85,10 @@ public struct VoiceControlReceipt: Sendable, Equatable {
 
 public protocol VoiceControlAdapter: Sendable {
     func observe() async throws -> VoiceControlSnapshot
-    func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot,
-                 authority: ActionAuthority) async throws -> VoiceControlReceipt
+    func execute(
+        action: VoiceControlAction, snapshot: VoiceControlSnapshot,
+        authority: ActionAuthority
+    ) async throws -> VoiceControlReceipt
 }
 
 public enum VoiceControlDecision: Sendable, Equatable {
@@ -84,10 +96,15 @@ public enum VoiceControlDecision: Sendable, Equatable {
     case clarify(String)
     /// Model inference is never reported as independently verified task completion.
     case finished
+    /// Exact local command whose requested effect was independently verified.
+    case directCompleted(String)
+    /// A local answer; no action or effect verification is implied.
+    case information(String)
 }
 
 public protocol VoiceControlDecisionEngine: Sendable {
-    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws -> VoiceControlDecision
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
 }
 
 public enum VoiceControlEvent: Sendable, Equatable {

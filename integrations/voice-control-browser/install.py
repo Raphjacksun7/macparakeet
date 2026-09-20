@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--extension-id', required=True)
 parser.add_argument('--host', required=True, type=Path)
 parser.add_argument('--browser', choices=['chrome', 'chromium', 'chrome-for-testing'], default='chrome')
+parser.add_argument('--user-data-dir', type=Path, help='Explicit disposable/custom browser profile root')
 args = parser.parse_args()
 if not re.fullmatch('[a-p]{32}', args.extension_id):
     parser.error('extension-id must be the exact 32-character Chromium extension ID')
@@ -27,6 +28,8 @@ config = private / 'pairing.json'
 if config.exists():
     parser.error('pairing already exists; preserve it and remove it explicitly before pairing a different extension')
 location = root / {'chrome':'Google/Chrome','chromium':'Chromium','chrome-for-testing':'Google/ChromeForTesting'}[args.browser] / 'NativeMessagingHosts'
+if args.user_data_dir:
+    location = args.user_data_dir.expanduser().resolve() / 'NativeMessagingHosts'
 location.mkdir(parents=True, exist_ok=True)
 manifest = location / 'com.macparakeet.voice_control.json'
 if manifest.exists():

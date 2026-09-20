@@ -3,6 +3,7 @@ import Foundation
 
 /// Browser-scoped adapter. A disconnected authorized tab never silently falls back to another app.
 public actor VoiceControlBrowserAdapter: VoiceControlAdapter {
+    private struct NotDispatched: Error {}
     public enum BridgeError: Error, LocalizedError {
         case notConnected, invalidResponse, remoteFailure, timedOut, alreadyRunning
         public var errorDescription: String? {
@@ -22,6 +23,7 @@ public actor VoiceControlBrowserAdapter: VoiceControlAdapter {
     private var sessionID: String?
     private var contextID: String?
     private var pending: [String: CheckedContinuation<Data, Error>] = [:]
+    private var executionRequests: Set<String> = []
     public var isConnected: Bool { sessionID != nil && contextID != nil && connection != nil }
     public init() {}
 
@@ -58,19 +60,21 @@ public actor VoiceControlBrowserAdapter: VoiceControlAdapter {
     private func disconnect() {
         connection?.close(); connection = nil; connectionID = nil
         sessionID = nil; contextID = nil
-        let waiting = pending; pending.removeAll()
+        let waiting = pending; pending.removeAll(); executionRequests.removeAll()
         for continuation in waiting.values { continuation.resume(throwing: BridgeError.notConnected) }
     }
 
     private func receive(_ data: Data?, from id: UUID) {
         guard id == connectionID else { return }
         guard let data,
-              let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = message["type"] as? String else { disconnect(); return }
+            let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let type = message["type"] as? String
+        else { disconnect(); return }
         if type == "hostHello" {
             guard sessionID == nil, let configuration,
-                  message["token"] as? String == configuration.token,
-                  message["origin"] as? String == configuration.extensionOrigin else { disconnect(); return }
+                message["token"] as? String == configuration.token,
+                message["origin"] as? String == configuration.extensionOrigin
+            else { disconnect(); return }
             sessionID = UUID().uuidString
             try? send(["type": "hostReady"])
             return
@@ -81,25 +85,34 @@ public actor VoiceControlBrowserAdapter: VoiceControlAdapter {
                 disconnect(); return
             }
             // Reauthorization revokes every old observation and outstanding request.
-            let waiting = pending; pending.removeAll()
-            for continuation in waiting.values { continuation.resume(throwing: BridgeError.remoteFailure) }
+            invalidateObservations()
             contextID = context
             try? send(["type": "authorized", "sessionID": sessionID, "contextID": context])
         } else if type == "invalidate" {
             contextID = nil
-            let waiting = pending; pending.removeAll()
-            for continuation in waiting.values { continuation.resume(throwing: BridgeError.remoteFailure) }
+            invalidateObservations()
         } else if type == "disconnect" {
             disconnect()
         } else if type == "response", message["sessionID"] as? String == sessionID,
-                  let requestID = message["requestID"] as? String,
-                  let continuation = pending.removeValue(forKey: requestID) {
+            let requestID = message["requestID"] as? String,
+            let continuation = pending.removeValue(forKey: requestID)
+        {
+            executionRequests.remove(requestID)
             guard message["ok"] as? Bool == true,
-                  let payload = message["payload"], JSONSerialization.isValidJSONObject(payload),
-                  let encoded = try? JSONSerialization.data(withJSONObject: payload) else {
+                let payload = message["payload"], JSONSerialization.isValidJSONObject(payload),
+                let encoded = try? JSONSerialization.data(withJSONObject: payload)
+            else {
                 continuation.resume(throwing: BridgeError.remoteFailure); return
             }
             continuation.resume(returning: encoded)
+        }
+    }
+
+    private func invalidateObservations() {
+        // Pending dispatches are invalidated remotely by document/context binding.
+        // Keep their receipt waiters: navigation may be the effect they dispatched.
+        for id in pending.keys.filter({ !executionRequests.contains($0) }) {
+            pending.removeValue(forKey: id)?.resume(throwing: BridgeError.remoteFailure)
         }
     }
 
@@ -121,12 +134,15 @@ public actor VoiceControlBrowserAdapter: VoiceControlAdapter {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 pending[requestID] = continuation
+                if type == "execute" { executionRequests.insert(requestID) }
                 do {
+                    if Task.isCancelled { throw CancellationError() }
                     // This is the dispatch boundary. Remote effects already dispatched cannot be unsent.
-                    if let authority { try authority.perform { try peer.write(data) } }
-                    else { try peer.write(data) }
+                    if let authority { try authority.perform { try peer.write(data) } } else { try peer.write(data) }
                 } catch {
-                    pending.removeValue(forKey: requestID)?.resume(throwing: error)
+                    executionRequests.remove(requestID)
+                    pending.removeValue(forKey: requestID)?.resume(
+                        throwing: error is CancellationError ? NotDispatched() : error)
                     return
                 }
                 Task { [weak self] in
@@ -148,6 +164,7 @@ public actor VoiceControlBrowserAdapter: VoiceControlAdapter {
     private func hasPending(_ id: String) -> Bool { pending[id] != nil }
     private func expire(_ id: String, cancelled: Bool) {
         guard let continuation = pending.removeValue(forKey: id) else { return }
+        executionRequests.remove(id)
         try? send(["type": "revoke", "requestID": id, "sessionID": sessionID ?? ""])
         continuation.resume(throwing: cancelled ? CancellationError() : BridgeError.timedOut)
     }
@@ -162,30 +179,41 @@ public actor VoiceControlBrowserAdapter: VoiceControlAdapter {
         let data = try await request(type: "observe")
         let snapshot = try JSONDecoder().decode(VoiceControlSnapshot.self, from: data)
         guard snapshot.contextID == contextID, snapshot.targets.count <= 200,
-              Set(snapshot.targets.map(\.id)).count == snapshot.targets.count,
-              snapshot.summary.count <= 6_000 else { throw BridgeError.invalidResponse }
+            Set(snapshot.targets.map(\.id)).count == snapshot.targets.count,
+            snapshot.summary.count <= 6_000
+        else { throw BridgeError.invalidResponse }
         return snapshot
     }
 
-    public func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot,
-                        authority: ActionAuthority) async throws -> VoiceControlReceipt {
+    public func execute(
+        action: VoiceControlAction, snapshot: VoiceControlSnapshot,
+        authority: ActionAuthority
+    ) async throws -> VoiceControlReceipt {
         guard snapshot.contextID == contextID,
-              snapshot.targets.contains(where: { $0.id == action.targetID && $0.operations.contains(action.operation) }) else {
+            snapshot.targets.contains(where: { $0.id == action.targetID && $0.operations.contains(action.operation) })
+        else {
             throw BridgeError.remoteFailure
         }
         struct Execution: Encodable { let action: VoiceControlAction; let snapshotID: UUID }
         let payload = try JSONEncoder().encode(Execution(action: action, snapshotID: snapshot.id))
+        try authority.check()
+        try Task.checkCancellation()
         do {
             let data = try await request(type: "execute", payload: payload, authority: authority)
             struct Result: Decodable { let status: String }
             let result = try JSONDecoder().decode(Result.self, from: data)
-            guard let status = VoiceControlReceipt.Status(rawValue: result.status) else { throw BridgeError.invalidResponse }
+            guard let status = VoiceControlReceipt.Status(rawValue: result.status) else {
+                throw BridgeError.invalidResponse
+            }
             return VoiceControlReceipt(status: status)
+        } catch is NotDispatched {
+            throw CancellationError()
         } catch is CancellationError {
             // The remote side may already have dispatched. Never replay an interrupted request.
             return VoiceControlReceipt(status: .unknown, message: "Browser action interrupted; check the page.")
         } catch {
-            return VoiceControlReceipt(status: .unknown, message: "Browser effect was not acknowledged; check the page.")
+            return VoiceControlReceipt(
+                status: .unknown, message: "Browser effect was not acknowledged; check the page.")
         }
     }
 }
@@ -209,8 +237,7 @@ private final class VoiceControlBrowserConnection: @unchecked Sendable {
         lock.lock(); let fd = Darwin.dup(descriptor); lock.unlock()
         DispatchQueue(label: "voice-control.browser.read").async {
             defer { Darwin.close(fd) }
-            do { while true { callback(try VoiceControlBrowserWire.readFrame(from: fd)) } }
-            catch { callback(nil) }
+            do { while true { callback(try VoiceControlBrowserWire.readFrame(from: fd)) } } catch { callback(nil) }
         }
     }
     func close() {
@@ -224,29 +251,42 @@ private final class VoiceControlBrowserConnection: @unchecked Sendable {
 
 private final class VoiceControlBrowserListener: @unchecked Sendable {
     private let descriptor: Int32
+    private let lockDescriptor: Int32
     private let lock = NSLock()
     private var closed = false
     init(accept: @escaping @Sendable (VoiceControlBrowserConnection) -> Void) throws {
         let directory = VoiceControlBrowserWire.directory
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                                 attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
         let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
-        guard (attributes[.posixPermissions] as? NSNumber)?.intValue == 0o700,
-              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
+        guard attributes[.type] as? FileAttributeType == .typeDirectory,
+            (attributes[.posixPermissions] as? NSNumber)?.intValue == 0o700,
+            (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()
+        else {
             throw VoiceControlBrowserWire.WireError.invalidConfiguration
         }
-        let fd = try VoiceControlBrowserWire.makeSocket()
+        let lockFD = Darwin.open(
+            directory.appendingPathComponent("bridge.lock").path, O_RDWR | O_CREAT | O_NOFOLLOW, 0o600)
+        guard lockFD >= 0 else { throw VoiceControlBrowserWire.WireError.socketFailure }
+        var lockAttributes = stat()
+        guard fstat(lockFD, &lockAttributes) == 0, lockAttributes.st_uid == getuid(),
+            lockAttributes.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), lockAttributes.st_mode & 0o777 == 0o600,
+            flock(lockFD, LOCK_EX | LOCK_NB) == 0
+        else {
+            Darwin.close(lockFD); throw VoiceControlBrowserAdapter.BridgeError.alreadyRunning
+        }
+        let fd: Int32
+        do { fd = try VoiceControlBrowserWire.makeSocket() } catch { Darwin.close(lockFD); throw error }
         do {
             let path = VoiceControlBrowserWire.socketPath
-            // Never unlink an existing socket: another app/worktree may own it.
-            guard try VoiceControlBrowserWire.withAddress(path, { Darwin.bind(fd, $0, $1) }) == 0 else {
-                throw VoiceControlBrowserAdapter.BridgeError.alreadyRunning
-            }
+            try VoiceControlBrowserWire.bindRecoveringStaleSocket(fd, path: path)
             guard chmod(path, 0o600) == 0, Darwin.listen(fd, 2) == 0 else {
                 Darwin.unlink(path); throw VoiceControlBrowserWire.WireError.socketFailure
             }
-        } catch { Darwin.close(fd); throw error }
+        } catch { Darwin.close(fd); Darwin.close(lockFD); throw error }
         descriptor = fd
+        lockDescriptor = lockFD
         DispatchQueue(label: "voice-control.browser.accept").async { [weak self] in
             while let self, !self.isClosed {
                 let peer = Darwin.accept(fd, nil, nil)
@@ -261,6 +301,7 @@ private final class VoiceControlBrowserListener: @unchecked Sendable {
         guard !closed else { return }; closed = true
         Darwin.shutdown(descriptor, SHUT_RDWR); Darwin.close(descriptor)
         Darwin.unlink(VoiceControlBrowserWire.socketPath)
+        Darwin.close(lockDescriptor)
     }
     deinit { close() }
 }

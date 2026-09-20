@@ -41,6 +41,11 @@ behind that gate is separate from accuracy evaluation and official release.
 [Share Service v1](contracts/share-service-v1.md) define the encrypted
 recipient-link, bundle, anonymous owner, lifecycle, and deletion boundaries.
 
+[Voice Control](contracts/voice-control.md) defines explicit command capture,
+cloud consent, target authority, effect receipts and browser pairing. Its
+[capability matrix](../docs/research/2026-09-19-jev-voice-control/release-scope.md)
+separates current implementation from the broader research design.
+
 ## Design References
 
 ### Planned speaker timeline
@@ -82,12 +87,13 @@ These decisions are final. Do not second-guess them.
 | Channel | Status | Notes |
 |---------|--------|-------|
 | Stable DMG `0.8.7` | User-facing release, recommended for normal use | Hold-to-talk restored when the microphone is already granted, Fn admitted with Caps Lock latched, hold-to-talk overlay keeps 16pt while cancelled/Undo is 7pt, dictation, file/media URL transcription, System Default microphone routing, separate live/final speech-engine routes, meeting recording with cleaned-mic finalization, independent source startup, and bounded capture lifecycle, calendar auto-start and activity-based auto-stop (both opt-in, default off), per-event calendar skip, start-meetings-muted (default off), Microsoft 365/Exchange calendar setup, meeting import and split, live transcription during recording (default on), timed transcript corrections, isolated speaker-assignment smoothing, Seed of Life library covers when a recording has no thumbnail, Clean English “um” stripping (Portuguese/German opt-out), optional preserved discarded dictations, Transcribe tile no longer sticks on Wrapping up after stop (status label only), skip-microphone onboarding for file-only users, AI Formatter off by default with separate dictation and transcript prompts, optional streaming-cursor dictation insert (default off), China-lab LLM providers, Sonoma Parakeet encoder off ANE, Transforms, VAD-guided meeting live-preview chunking, optional Nemotron Beta, Cohere, and WhisperKit, bundled CLI 4.4.0, exports, vocabulary, AI features |
-| Development source (this revision) | Unreleased; `main` and feature branches are not the stable download | Currently matches the 0.8.7 DMG. See [Sources/CLI/CHANGELOG.md](../Sources/CLI/CHANGELOG.md) for CLI version history, including the 4.0.0 major bump because `export --stdout --format txt` now matches TXT file export. Voice profiles remain gated off in release builds. Encrypted share links remain disabled. Check branch/commit identity; do not attribute later changes to the stable DMG. |
+| Development source (this revision) | Unreleased; `main` and feature branches are not the stable download | This branch adds experimental, explicitly enabled Voice Control beyond the 0.8.7 DMG. See [Sources/CLI/CHANGELOG.md](../Sources/CLI/CHANGELOG.md) for CLI version history, including the 4.0.0 major bump because `export --stdout --format txt` now matches TXT file export. Voice profiles remain gated off in release builds. Encrypted share links remain disabled. Check branch/commit identity; do not attribute later changes to the stable DMG. |
 
 Feature gates in the current source (`Sources/MacParakeetCore/AppFeatures.swift`); an implemented gated surface is not a shipped feature:
 
 | Flag | Value | Release note |
 |------|-------|--------------|
+| `voiceControlEnabled` | `false` | Explicit Voice Control is implemented on this branch; DEBUG builds may opt in with `--enable-voice-control`. Release builds ignore the argument. Native/browser and speech qualification remain separate gates; see [contract](contracts/voice-control.md). |
 | `shareLinksEnabled` | `false` | Encrypted text sharing is implemented but not publicly enabled. DEBUG builds may expose it with `--enable-share-links`; release builds ignore that argument. See the [implementation and release handoff](../docs/share-links-implementation.md). |
 | `meetingRecordingEnabled` | `true` | Shipping meeting-recording surface |
 | `calendarEnabled` | `true` | Shipping calendar reminders/auto-start; per-user auto-start defaults off |

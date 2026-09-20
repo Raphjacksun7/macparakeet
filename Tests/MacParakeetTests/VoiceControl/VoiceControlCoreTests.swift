@@ -13,13 +13,100 @@ final class VoiceControlCoreTests: XCTestCase {
     }
 
     func testJevRejectsUnlistedTargetAndInvalidDistributions() throws {
-        let valid = JevDecisionClient.Answer(type: "choice", choice: "a", probabilities: ["a": 0.8, "b": 0.2], confidence: 0.6)
+        let valid = JevDecisionClient.Answer(
+            type: "choice", choice: "a", probabilities: ["a": 0.8, "b": 0.2], confidence: 0.6)
         XCTAssertNoThrow(try JevDecisionClient.validate(valid, offered: ["a", "b"]))
         XCTAssertThrowsError(try JevDecisionClient.validate(valid, offered: ["a"]))
-        let wrongMaximum = JevDecisionClient.Answer(type: "choice", choice: "b", probabilities: ["a": 0.8, "b": 0.2], confidence: 0.6)
+        let wrongMaximum = JevDecisionClient.Answer(
+            type: "choice", choice: "b", probabilities: ["a": 0.8, "b": 0.2], confidence: 0.6)
         XCTAssertThrowsError(try JevDecisionClient.validate(wrongMaximum, offered: ["a", "b"]))
-        let nonNormalized = JevDecisionClient.Answer(type: "choice", choice: "a", probabilities: ["a": 0.8, "b": 0.8], confidence: 0.6)
+        let nonNormalized = JevDecisionClient.Answer(
+            type: "choice", choice: "a", probabilities: ["a": 0.8, "b": 0.8], confidence: 0.6)
         XCTAssertThrowsError(try JevDecisionClient.validate(nonNormalized, offered: ["a", "b"]))
+    }
+
+    func testRoundedProbabilitySumAcceptsFloatingPointDrift() throws {
+        let rounded = JevDecisionClient.Answer(
+            type: "choice", choice: "a", probabilities: ["a": 0.74, "b": 0.25], confidence: 0.6)
+        XCTAssertNoThrow(try JevDecisionClient.validate(rounded, offered: ["a", "b"]))
+        let invalid = JevDecisionClient.Answer(
+            type: "choice", choice: "a", probabilities: ["a": 0.73, "b": 0.25], confidence: 0.6)
+        XCTAssertThrowsError(try JevDecisionClient.validate(invalid, offered: ["a", "b"]))
+    }
+
+    func testObservedTransitionReplansFromFreshObservation() async {
+        let adapter = CoreTransitionAdapter(changesState: true)
+        let engine = CoreTransitionEngine()
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: engine)
+        await runner.submit("Open the next page")
+        let observations = await adapter.observations
+        let history = await engine.lastHistory
+        XCTAssertEqual(observations, 2)
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history.first?.receiptStatus, .transitionObserved)
+    }
+
+    func testRefreshedIDsCannotReplayActionAgainstSamePrestate() async {
+        let adapter = CoreTransitionAdapter(changesState: false)
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: CoreRepeatingEngine())
+        await runner.submit("Open the next page")
+        await runner.resume()
+        let executed = await adapter.executed
+        XCTAssertEqual(executed, 1)
+    }
+
+    func testWireRedactsSelectionAndOffersOnlySupportedDirectionsAndKeys() async throws {
+        let capture = CoreRequestCapture()
+        let selected = "selection-only-private-content"
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(
+                    id: "text", label: "Message", role: "textbox", value: "visible",
+                    operations: [.setValue, .insertText], selectedText: selected)
+            ])
+        let client = JevDecisionClient(
+            apiKey: "test", consent: { true },
+            transport: { request in
+                await capture.record(request.httpBody ?? Data())
+                return (
+                    Data(), HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
+                )
+            })
+        do { _ = try await client.decide(goal: "fill message", snapshot: snapshot, history: []) } catch {}
+        let body = await capture.body
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let state = try XCTUnwrap(json["state"] as? [String: Any])
+        let observation = try XCTUnwrap(state["observation"] as? [String: Any])
+        let targets = try XCTUnwrap(observation["targets"] as? [[String: Any]])
+        XCTAssertNil(targets.first?["selectedText"])
+        XCTAssertFalse(String(decoding: body, as: UTF8.self).contains(selected))
+        XCTAssertEqual(snapshot.targets[0].selectedText, selected)
+        let questions = try XCTUnwrap(json["questions"] as? [String: [String: Any]])
+        let direction = try XCTUnwrap(questions["direction"]?["criteria"] as? [String: String])
+        let keys = try XCTUnwrap(questions["key"]?["criteria"] as? [String: String])
+        XCTAssertEqual(Set(direction.keys), ["up", "down"])
+        XCTAssertEqual(Set(keys.keys), ["return", "escape", "tab", "none"])
+    }
+
+    func testInformationNeedsNoEffectAndDoesNotRequireCompleteObservation() async {
+        let runner = VoiceControlTurnRunner(adapter: CoreDirectAdapter(), engine: CoreInformationEngine())
+        await runner.submit("help")
+        var iterator = runner.events.makeAsyncIterator()
+        var final: VoiceControlEvent?
+        for _ in 0..<3 { final = await iterator.next() }
+        XCTAssertEqual(final, .completed("Available commands."))
+    }
+
+    func testVerifiedDirectCompletionIgnoresUnrelatedObservationTruncation() async {
+        let adapter = CoreDirectAdapter()
+        let runner = VoiceControlTurnRunner(adapter: adapter, engine: CoreDirectEngine())
+        await runner.submit("type hello")
+        var iterator = runner.events.makeAsyncIterator()
+        var final: VoiceControlEvent?
+        // Exactly observing/deciding/acting, then observing/deciding/completed.
+        for _ in 0..<6 { final = await iterator.next() }
+        XCTAssertEqual(final, .completed("Text entered."))
     }
 
     func testSourceSpansPreserveLiteralText() {
@@ -27,24 +114,42 @@ final class VoiceControlCoreTests: XCTestCase {
         XCTAssertTrue(JevDecisionClient.sourceSpans(text).contains("Please, keep  BOTH spaces and punctuation!"))
         XCTAssertTrue(JevDecisionClient.sourceSpans(text).allSatisfy { text.contains($0) })
         XCTAssertEqual(JevDecisionClient.sourceSpans(""), [])
+        XCTAssertTrue(JevDecisionClient.sourceSpans("Set destination to London.").contains("London"))
+        XCTAssertTrue(JevDecisionClient.sourceSpans("type Hello!").contains("Hello!"))
+        XCTAssertTrue(JevDecisionClient.sourceSpans("Set city to St. Louis.").contains("St. Louis"))
     }
 
     func testNoNetworkWithoutConsentAndErrorsNeverEchoResponse() async throws {
         let calls = CoreTransportCounter()
         let snapshot = VoiceControlSnapshot(contextID: "test", applicationName: "Fixture", targets: [])
-        let denied = JevDecisionClient(apiKey: "test-secret", consent: { false }, transport: { request in
-            await calls.increment()
-            return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
-        })
-        do { _ = try await denied.decide(goal: "test", snapshot: snapshot, history: []); XCTFail("Expected consent rejection") }
-        catch { XCTAssertFalse(error.localizedDescription.contains("test-secret")) }
+        let denied = JevDecisionClient(
+            apiKey: "test-secret", consent: { false },
+            transport: { request in
+                await calls.increment()
+                return (
+                    Data(), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                )
+            })
+        do {
+            _ = try await denied.decide(goal: "test", snapshot: snapshot, history: []);
+            XCTFail("Expected consent rejection")
+        } catch { XCTAssertFalse(error.localizedDescription.contains("test-secret")) }
         let count = await calls.count
         XCTAssertEqual(count, 0)
-        let rejected = JevDecisionClient(apiKey: "test-secret", consent: { true }, transport: { request in
-            (Data("test-secret private document".utf8), HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!)
-        })
-        do { _ = try await rejected.decide(goal: "test", snapshot: snapshot, history: []); XCTFail("Expected rejection") }
-        catch { XCTAssertFalse(error.localizedDescription.contains("test-secret")); XCTAssertFalse(error.localizedDescription.contains("private document")) }
+        let rejected = JevDecisionClient(
+            apiKey: "test-secret", consent: { true },
+            transport: { request in
+                (
+                    Data("test-secret private document".utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+                )
+            })
+        do {
+            _ = try await rejected.decide(goal: "test", snapshot: snapshot, history: []); XCTFail("Expected rejection")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.contains("test-secret"));
+            XCTAssertFalse(error.localizedDescription.contains("private document"))
+        }
     }
 
     func testUnknownPressRequiresConfirmationAndStopRevokesIt() async {
@@ -74,15 +179,24 @@ private actor CoreTestAdapter: VoiceControlAdapter {
     let navigation: Bool
     init(navigation: Bool = false) { self.navigation = navigation }
     func observe() async throws -> VoiceControlSnapshot {
-        VoiceControlSnapshot(contextID: "test", applicationName: "Fixture", targets: [VoiceControlTarget(id: "t1", label: "Send", role: "button", operations: [.press], isNavigation: navigation)])
+        VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(
+                    id: "t1", label: "Send", role: "button", operations: [.press], isNavigation: navigation)
+            ])
     }
-    func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws -> VoiceControlReceipt {
+    func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws
+        -> VoiceControlReceipt
+    {
         try authority.check(); executed += 1
         return VoiceControlReceipt(status: .unknown)
     }
 }
 private struct CoreTestEngine: VoiceControlDecisionEngine {
-    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws -> VoiceControlDecision {
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
+    {
         .action(VoiceControlAction(operation: .press, targetID: "t1"))
     }
 }
@@ -90,4 +204,83 @@ private struct CoreTestEngine: VoiceControlDecisionEngine {
 private actor CoreTransportCounter {
     var count = 0
     func increment() { count += 1 }
+}
+
+private actor CoreTransitionAdapter: VoiceControlAdapter {
+    let changesState: Bool
+    var observations = 0
+    var executed = 0
+    init(changesState: Bool) { self.changesState = changesState }
+    func observe() async throws -> VoiceControlSnapshot {
+        observations += 1
+        return VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(
+                    id: UUID().uuidString, label: "Next", role: "button", operations: [.press], isNavigation: true)
+            ], summary: changesState && executed > 0 ? "New page" : "Original page")
+    }
+    func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws
+        -> VoiceControlReceipt
+    {
+        try authority.check(); executed += 1
+        return VoiceControlReceipt(status: .transitionObserved)
+    }
+}
+private actor CoreTransitionEngine: VoiceControlDecisionEngine {
+    var lastHistory: [VoiceControlAction] = []
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
+    {
+        lastHistory = history
+        if snapshot.summary == "New page" { return .finished }
+        return .action(VoiceControlAction(operation: .press, targetID: snapshot.targets[0].id))
+    }
+}
+private struct CoreRepeatingEngine: VoiceControlDecisionEngine {
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
+    {
+        .action(VoiceControlAction(operation: .press, targetID: snapshot.targets[0].id))
+    }
+}
+
+private actor CoreRequestCapture {
+    var body = Data()
+    func record(_ value: Data) { body = value }
+}
+private actor CoreDirectAdapter: VoiceControlAdapter {
+    var edited = false
+    func observe() async throws -> VoiceControlSnapshot {
+        VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [
+                VoiceControlTarget(
+                    id: "text", label: "Message", role: "textbox", value: edited ? "hello" : "", operations: [.setValue]
+                )
+            ], isComplete: false)
+    }
+    func execute(action: VoiceControlAction, snapshot: VoiceControlSnapshot, authority: ActionAuthority) async throws
+        -> VoiceControlReceipt
+    {
+        try authority.check(); edited = true
+        return VoiceControlReceipt(status: .verified)
+    }
+}
+private struct CoreDirectEngine: VoiceControlDecisionEngine {
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
+    {
+        history.isEmpty
+            ? .action(VoiceControlAction(operation: .setValue, targetID: "text", value: "hello"))
+            : .directCompleted("Text entered.")
+    }
+}
+
+private struct CoreInformationEngine: VoiceControlDecisionEngine {
+    func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
+        -> VoiceControlDecision
+    {
+        .information("Available commands.")
+    }
 }

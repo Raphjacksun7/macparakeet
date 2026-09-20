@@ -84,16 +84,17 @@ if [[ "$VERSION" == "0.0.0" ]]; then
   echo "Set VERSION=X.Y.Z for release builds so Sparkle and release metadata are correct." >&2
 fi
 
-build_cli_swiftpm() {
+build_swiftpm_helper() {
+  local product="$1"
   if [[ "$SKIP_BUILD" == "1" ]]; then
     return 0
   fi
 
   pushd "$ROOT_DIR" >/dev/null
   if [[ "$UNIVERSAL" == "1" ]]; then
-    swift build -c release --arch arm64 --arch x86_64 --product macparakeet-cli
+    swift build -c release --arch arm64 --arch x86_64 --product "$product"
   else
-    swift build -c release --product macparakeet-cli
+    swift build -c release --product "$product"
   fi
   popd >/dev/null
 }
@@ -206,7 +207,7 @@ swiftpm_release_bin_dir() {
 }
 
 copy_cli_binary() {
-  build_cli_swiftpm
+  build_swiftpm_helper macparakeet-cli
 
   local cli_bin_dir
   cli_bin_dir="$(swiftpm_release_bin_dir macparakeet-cli)"
@@ -221,10 +222,27 @@ copy_cli_binary() {
   echo "Bundled CLI: $MACOS_DIR/macparakeet-cli"
 }
 
+copy_browser_helper() {
+  build_swiftpm_helper macparakeet-browser-host
+  local browser_bin_dir
+  browser_bin_dir="$(swiftpm_release_bin_dir macparakeet-browser-host)"
+  local browser_bin_path="$browser_bin_dir/macparakeet-browser-host"
+  if [[ ! -x "$browser_bin_path" ]]; then
+    echo "Failed to locate browser host Release binary at: $browser_bin_path" >&2
+    exit 1
+  fi
+  cp "$browser_bin_path" "$MACOS_DIR/macparakeet-browser-host"
+  chmod +x "$MACOS_DIR/macparakeet-browser-host"
+  mkdir -p "$RESOURCES_DIR/VoiceControlBrowser"
+  rsync -a --delete "$ROOT_DIR/integrations/voice-control-browser/extension/" "$RESOURCES_DIR/VoiceControlBrowser/"
+  echo "Bundled Voice Control browser helper and extension"
+}
+
 build_xcodebuild
 echo "[2/4] Assembling app bundle…"
 
 copy_cli_binary
+copy_browser_helper
 
 # Bundle FFmpeg (required at runtime for media demux/conversion).
 #

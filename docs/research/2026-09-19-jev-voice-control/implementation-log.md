@@ -35,3 +35,37 @@ Focused suites during implementation; full Swift suite at most once as final gat
 - Live Swift Jev client tested only synthetic form context: destination London selected correctly (~385ms); negated search caused no action (~109ms); compound source/destination requests produced correct origin selection in several runs and clarification in others. One response failed strict validation; later probes observed probability sums of 0.99, so rounding tolerance needs a regression check. These are model-call durations, not voice-to-effect latency.
 - Review caught incomplete selected-text data loss; adapters now omit over-limit selections rather than rewrite a prefix over the full range.
 - Outstanding before qualification: richer observed transitions for generic presses, direct-route terminal bookkeeping, hands-free cancellation/partial preview hardening, native fixture/hardware trials and full scope audit. This checkpoint is not release ready.
+
+## Live-loop qualification and corrections
+
+- Native AX probe initially failed its global focused-application check. A separate minimal AX probe returned `AXFocusedApplication -25204` on this Mac while NSWorkspace correctly identified the foreground application. The adapter now reads foreground PID on MainActor through NSWorkspace and retains scoped AX window/control revalidation. It does not bypass target freshness.
+- Native observation initially descended closed system menus; the live fixture exposed recent-item labels. Closed menu descendants are now excluded. The qualification probe explicitly disables menu/app enumeration so only disposable fixture controls reach its synthetic Jev calls. No raw native snapshot from that initial discovery is committed.
+- Native live Jev+AX two-field goal succeeded after correction: Origin verified at383ms, Destination verified at560ms, model completion at710ms. These are one local fixture and text instruction, not microphone latency or broad app compatibility.
+- Browser worker completed full synthetic flight goal through actual extension/native host/private socket/Swift runner/live Jev, with independent DOM assertion of origin/destination/date/trip type. Seven decisions, roughly150–260ms each. Fixture-only allowlisted confirmation automation and loopback permission distinguish this from production/manual confirmation qualification. No real flight booking occurred.
+
+## Hardened integration checkpoint
+
+- `swift test --filter 'VoiceControl|DictationFlowCoordinator|TransformRunSerializer'`: 96 tests, zero failures at 17:46 local. Includes ordinary dictation and Transform admission/cancellation regression suites, speech Stop fencing, browser socket safety and exact local command completion. Full suite has not run yet.
+- Fable implementation review is recorded in `implementation-fable-adversarial-review.md`. Fixes include synchronous speech revocation, microphone startup independent of UI observation, immediate consent revocation, source selection redaction, direct verified completion, stale socket recovery and payment-field exclusion.
+- Browser recording saved under ignored `output/voice-control/`; detailed evidence and unsuccessful confidence-pause trials are in `browser-implementation-evidence.md`.
+- Local Parakeet correctly transcribed a synthetic speech file: “Set origin to Zurich and destination to London.” This used the existing file CLI, not the command capture path, so it does not qualify microphone integration. The initial CLI invocation omitted `--no-history` and created synthetic history item `14BA4552-7D80-4143-A413-6F8B9E3EAA5C`; it has been left intact. Further CLI qualification must use `--no-history` or isolated state. No existing user records were changed or deleted.
+
+## Review resolution notes
+
+The adversarial report is retained verbatim as review evidence, not current status.
+Its blocking speech confirmation, GUI admission feedback, literal introducer and
+direct completion findings have focused regressions in the hardened checkpoint.
+Consent, microphone ordering, stale socket, scroll direction, payment exclusion,
+pre-dispatch cancellation and short-tap copy fixes are implemented. Native AX
+IPC uses a bounded timeout and no focus read occurs inside the revocation lock.
+Probability normalization uses 0.010001 tolerance, enough for observed 0.99
+rounding plus floating-point error; it does not accept arbitrary malformed sums.
+Manual keyboard/mouse takeover intentionally pauses a retained task; ordinary
+terminal sessions release admission when their microphone is off. Physical
+speech/confirmation and packaged installation evidence still need separate checks.
+
+## Packaged setup checkpoint
+
+- Hardened integration rerun: 105 tests passed, zero failures at 17:53 local. Includes five native registration tests and contextual-help/Unicode replacement regressions. Dev/dist scripts pass `bash -n`.
+- Browser host and extension now embed in dev/dist bundles; native setup registers an exact extension ID with explicit replacement and secure file handling. A browser listener can start without microphone capture. Web Store publication is still separate.
+- Native review found hidden/offscreen controls, ambiguous AX read failures, cross-window undo and stale foreground checks. Observation now requires visible geometry before reading values/offering controls; required edit values fail closed; undo retains its original window; effects recheck foreground ownership. Generic checkboxes/links require confirmation because their semantics can be consequential. These require runtime rerun in the disposable fixture.

@@ -12,6 +12,29 @@ See [00-vision.md](./00-vision.md) for positioning and market context.
 
 ---
 
+## Explicit Voice Control (development)
+
+Voice Control is an opt-in surface separate from ordinary dictation. Hold its
+configurable shortcut (Control–Option–Space by default), or explicitly start a
+hands-free session from the menu. Speech uses the existing local microphone and
+STT scheduler; command audio and instructions do not enter dictation history.
+
+After separate cloud consent, Jev selects typed actions over current native
+Accessibility controls or an explicitly connected browser tab. The runner can
+retain a goal across changing controls, enter literal text, replace an exact
+phrase, scroll, activate an app, and request confirmation for consequential or
+uncertain effects. Selected-text rewrites use the configured writing provider
+with separate consent. Stop revokes queued actions; unknown outcomes pause and
+are not replayed. Model-inferred completion is labeled as such.
+
+This branch's feature remains development-only, enabled with
+`--enable-voice-control` in a Debug app. It is not part of the stable DMG.
+See the [boundary contract](contracts/voice-control.md),
+[decision](adr/033-explicit-voice-control.md), and
+[capability and evidence matrix](../docs/research/2026-09-19-jev-voice-control/release-scope.md)
+for the implemented routes and unqualified surfaces. The wider research plan is
+not a claim that every proposed command is available.
+
 ## Feature Tiers
 
 ```

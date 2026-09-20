@@ -21,12 +21,14 @@ public enum VoiceControlBrowserWire {
         let url = directory.appendingPathComponent("pairing.json")
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         guard (attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600,
-              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
+            (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()
+        else {
             throw WireError.invalidConfiguration
         }
         let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: url))
         guard config.token.count >= 64,
-              config.extensionOrigin.range(of: #"^chrome-extension://[a-p]{32}/$"#, options: .regularExpression) != nil else {
+            config.extensionOrigin.range(of: #"^chrome-extension://[a-p]{32}/$"#, options: .regularExpression) != nil
+        else {
             throw WireError.invalidConfiguration
         }
         return config
@@ -72,6 +74,30 @@ public enum VoiceControlBrowserWire {
         }
     }
 
+    /// Caller holds the directory's exclusive bridge lock. Recover only an owned,
+    /// private socket with no listener; never unlink a symlink, file, or live socket.
+    static func bindRecoveringStaleSocket(_ descriptor: Int32, path: String) throws {
+        if try withAddress(path, { Darwin.bind(descriptor, $0, $1) }) == 0 { return }
+        guard errno == EADDRINUSE else { throw WireError.socketFailure }
+        var before = stat()
+        guard lstat(path, &before) == 0, before.st_uid == getuid(),
+            before.st_mode & mode_t(S_IFMT) == mode_t(S_IFSOCK), before.st_mode & 0o777 == 0o600
+        else {
+            throw WireError.socketFailure
+        }
+        let probe = try makeSocket()
+        let result = try withAddress(path) { Darwin.connect(probe, $0, $1) }
+        let connectionError = errno
+        Darwin.close(probe)
+        guard result != 0, connectionError == ECONNREFUSED else { throw WireError.socketFailure }
+        var current = stat()
+        guard lstat(path, &current) == 0, current.st_dev == before.st_dev, current.st_ino == before.st_ino,
+            current.st_uid == before.st_uid, current.st_mode == before.st_mode,
+            Darwin.unlink(path) == 0,
+            try withAddress(path, { Darwin.bind(descriptor, $0, $1) }) == 0
+        else { throw WireError.socketFailure }
+    }
+
     public static func makeSocket() throws -> Int32 {
         let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw WireError.socketFailure }
@@ -80,7 +106,9 @@ public enum VoiceControlBrowserWire {
         return descriptor
     }
 
-    public static func withAddress<T>(_ path: String, _ body: (UnsafePointer<sockaddr>, socklen_t) throws -> T) throws -> T {
+    public static func withAddress<T>(_ path: String, _ body: (UnsafePointer<sockaddr>, socklen_t) throws -> T) throws
+        -> T
+    {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(path.utf8) + [0]

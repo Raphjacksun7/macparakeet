@@ -17,6 +17,11 @@ APP_BUNDLE="$PRODUCT_DIR/MacParakeet-Dev.app"
 LOG_FILE="${TMPDIR:-/tmp}/macparakeet-dev.log"
 BUILD_LOG_FILE="${TMPDIR:-/tmp}/macparakeet-dev-build.log"
 APP_MACOS_BIN="$APP_BUNDLE/Contents/MacOS/MacParakeet"
+BROWSER_HOST_NAME="macparakeet-browser-host"
+BROWSER_HOST_CONFIG="$(echo "$CONFIG" | tr '[:upper:]' '[:lower:]')"
+BROWSER_HOST_BIN_DIR="$(swift build --package-path "$ROOT_DIR" -c "$BROWSER_HOST_CONFIG" --product "$BROWSER_HOST_NAME" --show-bin-path)"
+BROWSER_HOST_BIN="$BROWSER_HOST_BIN_DIR/$BROWSER_HOST_NAME"
+BROWSER_HOST_BUNDLED="$APP_BUNDLE/Contents/MacOS/$BROWSER_HOST_NAME"
 # Keep every Dev bundle off the stable app's database and media directories.
 # The override is honored in both Debug and optimized Release configurations.
 APP_STATE_DIR="${MACPARAKEET_DEBUG_APP_STATE_DIR:-$HOME/Library/Application Support/MacParakeet-Dev}"
@@ -89,6 +94,9 @@ binary_has_rpath() {
 echo "[1/5] Requesting ordinary quit for this worktree's dev build…"
 source "$ROOT_DIR/scripts/dev/stop_app_processes.sh"
 stop_app_processes 10 "$ROOT_DIR" "$APP_BIN" "$APP_MACOS_BIN"
+# Browser-owned helpers should exit when the app closes its socket. Refuse to
+# replace either executable if an independently connected helper is still alive.
+stop_app_processes 10 "$ROOT_DIR" "$BROWSER_HOST_BIN" "$BROWSER_HOST_BUNDLED"
 
 echo "[2/5] Building $CONFIG app bundle (xcodebuild, target signing disabled)…"
 if ! xcodebuild build \
@@ -118,12 +126,16 @@ if [[ -d "$PRODUCT_DIR/Sparkle.framework" && ! -e "$PKGFW_DIR/Sparkle.framework"
   ln -s "$PRODUCT_DIR/Sparkle.framework" "$PKGFW_DIR/Sparkle.framework"
 fi
 
+swift build --package-path "$ROOT_DIR" -c "$BROWSER_HOST_CONFIG" --product "$BROWSER_HOST_NAME"
+
 echo "[3/5] Wrapping in .app bundle for macOS permissions…"
 # Create a minimal .app bundle so macOS TCC (Accessibility, Microphone) can
 # identify and remember permissions for the dev build across rebuilds.
 MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$MACOS_DIR"
 cp -f "$APP_BIN" "$APP_MACOS_BIN"
+cp -f "$BROWSER_HOST_BIN" "$BROWSER_HOST_BUNDLED"
+chmod +x "$BROWSER_HOST_BUNDLED"
 
 # Copy resource bundle (contains discover-fallback.json etc.)
 RESOURCE_BUNDLE="$PRODUCT_DIR/MacParakeet_MacParakeet.bundle"
@@ -145,6 +157,8 @@ while IFS= read -r -d '' bundle; do
     rsync -a --delete "$bundle/" "$RESOURCES_DIR/$bundle_name/"
   fi
 done < <(find "$PRODUCT_DIR" -maxdepth 1 -type d -name '*.bundle' -print0)
+mkdir -p "$RESOURCES_DIR/VoiceControlBrowser"
+rsync -a --delete "$ROOT_DIR/integrations/voice-control-browser/extension/" "$RESOURCES_DIR/VoiceControlBrowser/"
 mkdir -p "$RESOURCES_DIR/Legal"
 cp "$ROOT_DIR/Sources/MacParakeet/Resources/Legal/MarkdownDependencies.txt" "$RESOURCES_DIR/Legal/MarkdownDependencies.txt"
 cp "$ROOT_DIR/THIRD_PARTY_LICENSES.md" "$RESOURCES_DIR/Legal/THIRD_PARTY_LICENSES.md"
@@ -242,7 +256,7 @@ echo "[4/5] Launching ${CONFIG} app…"
 open -n "$APP_BUNDLE" --env MACPARAKEET_DEBUG_APP_STATE_DIR="$APP_STATE_DIR" \
   --env MACPARAKEET_GIT_COMMIT="$GIT_COMMIT" \
   --env MACPARAKEET_BUILD_DATE_UTC="$BUILD_DATE_UTC" \
-  --env MACPARAKEET_BUILD_SOURCE="$BUILD_SOURCE" >"$LOG_FILE" 2>&1
+  --env MACPARAKEET_BUILD_SOURCE="$BUILD_SOURCE" --args "$@" >"$LOG_FILE" 2>&1
 
 echo "[5/5] Launch requested"
 echo "  bundle: $APP_BUNDLE"

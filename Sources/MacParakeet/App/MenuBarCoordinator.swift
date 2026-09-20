@@ -55,6 +55,7 @@ final class MenuBarCoordinator: NSObject, NSMenuDelegate {
     private let onQuit: () -> Void
     private let onShowAboutPanel: () -> Void
     var onVoiceControl: (() -> Void)?
+    var onInteractionBusy: (() -> Void)?
 
     private var statusItem: NSStatusItem?
     private var statusItemState = MenuBarStatusItemState()
@@ -848,7 +849,7 @@ final class MenuBarCoordinator: NSObject, NSMenuDelegate {
 
     /// Resign menu-bar focus, wait for the target app to regain focus, then paste.
     private func pasteFromMenu(text: String, clipboardService: ClipboardServiceProtocol) async {
-        guard let lease = GUIMutationArbiter.shared.acquire(.historyPaste) else { return }
+        guard let lease = GUIMutationArbiter.shared.acquire(.historyPaste) else { onInteractionBusy?(); return }
         defer { GUIMutationArbiter.shared.release(lease) }
         NSApp.deactivate()
         try? await Task.sleep(for: .milliseconds(200))

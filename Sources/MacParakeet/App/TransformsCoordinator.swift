@@ -173,7 +173,11 @@ final class TransformsCoordinator {
 
     private func handleTrigger(promptID: UUID) {
         guard AppFeatures.transformsEnabled else { return }
-        if let owner = GUIMutationArbiter.shared.current?.owner, owner != .transform { return }
+        if let owner = GUIMutationArbiter.shared.current?.owner, owner != .transform {
+            panelController?.show()
+            panelController?.fail(message: "Finish the current voice task before running a Transform.")
+            return
+        }
         guard let prompt = promptIndex[promptID] else {
             logger.notice("transforms: trigger for unknown promptID, reloading bindings")
             reloadBindings()

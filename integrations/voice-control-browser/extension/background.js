@@ -6,10 +6,10 @@ let connectReply = null;
 let connectionTimer = null;
 const revoked = new Set();
 
-function disconnect() {
+function disconnect(reason) {
   const old = port; port = null; authorization = null; sessionID = null;
   revoked.clear(); clearTimeout(connectionTimer);
-  if (connectReply) { connectReply({ok:false,error:'Open MacParakeet and complete browser setup first.'}); connectReply = null; }
+  if (connectReply) { connectReply({ok:false,error:typeof reason === 'string' ? reason : 'Open MacParakeet and complete browser setup first.'}); connectReply = null; }
   try { old?.disconnect(); } catch { /* already disconnected */ }
 }
 function reply(request, payload, ok = true) {
@@ -23,7 +23,7 @@ async function authorizedTab(request) {
   const tab = await chrome.tabs.get(authorization.tabId);
   const window = await chrome.windows.get(tab.windowId);
   if (!tab.active || !window.focused || tab.windowId !== authorization.windowId || tab.url !== authorization.url) throw Error('Tab changed');
-  return authorization;
+  return {...authorization};
 }
 async function dispatch(request) {
   if (request.type === 'authorized') {
@@ -39,11 +39,25 @@ async function dispatch(request) {
     return;
   }
   if (!['observe','execute'].includes(request.type) || typeof request.requestID !== 'string') return;
+  let scope;
   try {
-    const scope = await authorizedTab(request);
+    scope = await authorizedTab(request);
     const result = await chrome.tabs.sendMessage(scope.tabId, {...request, documentID:scope.documentID}, {documentId:scope.documentID});
     reply(request, result.payload, result.ok === true);
-  } catch { reply(request, {}, false); }
+  } catch {
+    // Navigation can destroy the content-script reply after a dispatched click.
+    // Report only the independently observed same-origin interface transition.
+    if (scope && request.type === 'execute' && request.payload?.action?.operation === 'press') {
+      try {
+        const tab = await chrome.tabs.get(scope.tabId);
+        if (authorization && tab.active && tab.windowId === scope.windowId && new URL(tab.url).origin === scope.origin &&
+            (tab.url !== scope.url || authorization.documentID !== scope.documentID)) {
+          return reply(request,{status:'transitionObserved'});
+        }
+      } catch { /* unknown, never retry */ }
+    }
+    reply(request, {}, false);
+  }
 }
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Only the extension popup can change authorization. Content scripts/pages cannot.
@@ -69,7 +83,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     port = chrome.runtime.connectNative('com.macparakeet.voice_control');
     const currentPort = port;
     port.onMessage.addListener(message => { if (port === currentPort) void dispatch(message); });
-    port.onDisconnect.addListener(() => { if (port === currentPort) disconnect(); });
+    port.onDisconnect.addListener(() => { const reason=chrome.runtime.lastError?.message; if (port === currentPort) disconnect(reason); });
     port.postMessage({type:'authorize',contextID:scope.contextID});
     connectionTimer = setTimeout(() => disconnect(), 5000);
   })().catch(error => { disconnect(); sendResponse({ok:false,error:error.message}); });

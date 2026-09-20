@@ -7,7 +7,8 @@ import MacParakeetCore
 do {
     let configuration = try VoiceControlBrowserWire.configuration()
     guard CommandLine.arguments.count == 2,
-          CommandLine.arguments[1] == configuration.extensionOrigin else {
+        CommandLine.arguments[1] == configuration.extensionOrigin
+    else {
         throw VoiceControlBrowserWire.WireError.invalidConfiguration
     }
     let descriptor = try VoiceControlBrowserWire.makeSocket()
@@ -22,7 +23,8 @@ do {
     try VoiceControlBrowserWire.writeFrame(hello, to: descriptor)
     let acknowledgement = try VoiceControlBrowserWire.readFrame(from: descriptor)
     guard let object = try JSONSerialization.jsonObject(with: acknowledgement) as? [String: Any],
-          object["type"] as? String == "hostReady" else {
+        object["type"] as? String == "hostReady"
+    else {
         throw VoiceControlBrowserWire.WireError.invalidConfiguration
     }
     DispatchQueue(label: "voice-control.native-host.input").async {
