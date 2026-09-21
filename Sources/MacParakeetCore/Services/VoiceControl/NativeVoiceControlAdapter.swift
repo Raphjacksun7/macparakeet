@@ -98,6 +98,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         // Display and window geometry are read once per observation, not per node.
         let display = Self.activeDisplayBounds()
         let windowFrame = Self.frame(root)
+        let walkStarted = ContinuousClock.now
         let walk = AXTreeWalk.run(
             roots: roots, source: LiveAXTreeSource(), display: display, window: windowFrame,
             focused: focused.map(AXNodeHandle.init), caps: walkCaps)
@@ -211,7 +212,11 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         let snapshot = VoiceControlSnapshot(
             id: snapshotID, contextID: contextID, applicationName: name,
             targets: targets, summary: String(([title] + text).joined(separator: "\n").prefix(4000)),
-            isComplete: complete)
+            isComplete: complete,
+            metrics: VoiceControlObservationMetrics(
+                nodesVisited: walk.visited, capped: !walk.complete,
+                walkMilliseconds: Int(walkStarted.duration(to: .now).components.seconds) * 1000
+                    + Int(walkStarted.duration(to: .now).components.attoseconds / 1_000_000_000_000_000)))
         current = snapshot
         return snapshot
     }
@@ -805,24 +810,57 @@ struct AXNodeHandle: Hashable, @unchecked Sendable {
 /// adapter reads values, settability and selection for the kept nodes.
 struct LiveAXTreeSource: AXTreeSource {
     typealias Node = AXNodeHandle
+    /// One IPC round trip per node for everything the walk needs. Missing
+    /// attributes come back as AXValue error placeholders, not as failures.
+    private static let batch: [String] = [
+        kAXRoleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute,
+        kAXPositionAttribute, kAXSizeAttribute, "AXHidden", kAXSelectedAttribute, kAXValueAttribute,
+    ]
     func children(of node: AXNodeHandle) -> [AXNodeHandle] {
         (NativeVoiceControlAdapter.attributeValue(node.element, kAXChildrenAttribute) as? [AXUIElement] ?? []).map(AXNodeHandle.init)
     }
     func facts(of node: AXNodeHandle) -> AXWalkFacts {
         let element = node.element
-        let role = NativeVoiceControlAdapter.stringValue(element, kAXRoleAttribute)
+        AXUIElementSetMessagingTimeout(element, 0.15)
+        var raw: CFArray?
+        let status = AXUIElementCopyMultipleAttributeValues(element, Self.batch as CFArray, [], &raw)
+        let values = status == .success ? (raw as? [AnyObject] ?? []) : []
+        func at(_ index: Int) -> AnyObject? {
+            guard values.indices.contains(index) else { return nil }
+            let value = values[index]
+            // A placeholder for a missing attribute is an AXValue of error type.
+            if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(unsafeDowncast(value, to: AXValue.self)) == .axError {
+                return nil
+            }
+            return value
+        }
+        func string(_ index: Int) -> String {
+            if let text = at(index) as? String { return text }
+            if let number = at(index) as? NSNumber { return number.stringValue }
+            return ""
+        }
+        let role = string(0)
+        var label = ""
+        for index in 1...3 where label.isEmpty { label = string(index) }
+        var frame: CGRect?
+        if let position = at(4), let size = at(5), CFGetTypeID(position) == AXValueGetTypeID(),
+            CFGetTypeID(size) == AXValueGetTypeID()
+        {
+            var point = CGPoint.zero; var extent = CGSize.zero
+            if AXValueGetValue(unsafeDowncast(position, to: AXValue.self), .cgPoint, &point),
+                AXValueGetValue(unsafeDowncast(size, to: AXValue.self), .cgSize, &extent)
+            {
+                frame = CGRect(origin: point, size: extent)
+            }
+        }
         var actionNames: CFArray?
         AXUIElementCopyActionNames(element, &actionNames)
         let actions = actionNames as? [String] ?? []
-        let text: String? =
-            role == kAXStaticTextRole ? (NativeVoiceControlAdapter.attributeValue(element, kAXValueAttribute) as? String) : nil
         return AXWalkFacts(
-            role: role, label: NativeVoiceControlAdapter.labelValue(element),
-            frame: NativeVoiceControlAdapter.frame(element),
-            hidden: NativeVoiceControlAdapter.attributeValue(element, "AXHidden") as? Bool == true,
+            role: role, label: label, frame: frame,
+            hidden: at(6) as? Bool == true,
             pressable: actions.contains(kAXPressAction),
-            menuOpen: role == kAXMenuBarItemRole
-                && NativeVoiceControlAdapter.attributeValue(element, kAXSelectedAttribute) as? Bool == true,
-            text: text)
+            menuOpen: role == kAXMenuBarItemRole && at(7) as? Bool == true,
+            text: role == kAXStaticTextRole ? (at(8) as? String) : nil)
     }
 }

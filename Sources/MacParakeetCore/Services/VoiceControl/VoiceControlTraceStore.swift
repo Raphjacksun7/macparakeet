@@ -23,6 +23,7 @@ public struct VoiceControlPersistedObservation: Codable, Sendable, Equatable {
     public var snapshotID: UUID?
     public var contextID: String?
     public var summary: String?
+    public var metrics: VoiceControlObservationMetrics?
 
     /// Rebuild a snapshot the router and decision engine can run against.
     /// Values are absent, so `value`-dependent local routes (`replace X with Y`,
@@ -38,7 +39,7 @@ public struct VoiceControlPersistedObservation: Codable, Sendable, Equatable {
                     isNavigation: target.isNavigation, isFocused: target.isFocused,
                     valueIsComplete: target.valueIsComplete)
             },
-            summary: summary ?? "", isComplete: complete)
+            summary: summary ?? "", isComplete: complete, metrics: metrics)
     }
 }
 
@@ -143,7 +144,7 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
                     valueIsComplete: target.valueIsComplete, hasValue: target.value != nil)
             },
             snapshotID: snapshot.id, contextID: snapshot.contextID,
-            summary: Self.clip(snapshot.summary, 4_000))
+            summary: Self.clip(snapshot.summary, 4_000), metrics: snapshot.metrics)
         session?.applicationName = snapshot.applicationName
         session?.observations.append(observation)
         if let count = session?.observations.count, count > 8 {
@@ -199,6 +200,9 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
         if let sessionURL { try? data.write(to: sessionURL) }
         try? data.write(to: latestURL, options: .atomic)
         var markdown = session.summary?.markdown(instruction: session.instruction, taskID: session.taskID)
+        if let metrics = session.observations.last?.metrics {
+            markdown = (markdown ?? "") + "walk: visited=\(metrics.nodesVisited) capped=\(metrics.capped) \(metrics.walkMilliseconds)ms\n"
+        }
         let decisionLines = Self.decisionLines(session.decisions, observations: session.observations)
         if !decisionLines.isEmpty { markdown = (markdown ?? "") + decisionLines.joined(separator: "\n") + "\n" }
         try? markdown?.data(using: .utf8)?.write(to: latestMarkdownURL, options: .atomic)
