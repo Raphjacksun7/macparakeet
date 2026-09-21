@@ -98,4 +98,14 @@ final class ScreenTextSourceTests: XCTestCase {
             targets: [VoiceControlTarget(id: "b", label: "Save", role: "AXButton", operations: [.press]), textTarget])
         XCTAssertTrue(VoiceControlLegality.offeredTargets(in: plain).contains { $0.role == "text" })
     }
+
+    func testSingleGlyphsAndSymbolRunsAreNotAddressable() {
+        for glyph in ["f", "#", "•", "→", "• C"] { XCTAssertFalse(ScreenTextMerge.isAddressable(glyph), glyph) }
+        for word in ["OK", "Ask Gemini", "$412", "9:41"] { XCTAssertTrue(ScreenTextMerge.isAddressable(word), word) }
+        let blocks = [
+            ScreenTextBlock(text: "#", confidence: 0.9, frame: CGRect(x: 0, y: 0, width: 10, height: 10)),
+            ScreenTextBlock(text: "Compose", confidence: 0.9, frame: CGRect(x: 0, y: 20, width: 60, height: 10)),
+        ]
+        XCTAssertEqual(ScreenTextMerge.unexplained(blocks, controls: [], excludedFrames: []).map(\.text), ["Compose"])
+    }
 }

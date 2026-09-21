@@ -172,10 +172,17 @@ public enum ScreenTextMerge {
         _ blocks: [ScreenTextBlock], controls: [(label: String, frame: CGRect)], excludedFrames: [CGRect]
     ) -> [ScreenTextBlock] {
         blocks.filter { block in
-            !isSecureLine(block.text)
+            isAddressable(block.text) && !isSecureLine(block.text)
                 && !excludedFrames.contains(where: { $0.intersects(block.frame) })
                 && !controls.contains(where: { matches(block, controlLabel: $0.label, controlFrame: $0.frame) })
         }
+    }
+
+    /// A single glyph or a run of symbols (`f`, `#`, `•`, `→`) is an icon Vision
+    /// read as text; nobody will say it, and it only pads the option list.
+    static func isAddressable(_ text: String) -> Bool {
+        let letters = text.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }
+        return letters.count >= 2
     }
 
     private static func area(_ rect: CGRect) -> CGFloat { max(0, rect.width) * max(0, rect.height) }

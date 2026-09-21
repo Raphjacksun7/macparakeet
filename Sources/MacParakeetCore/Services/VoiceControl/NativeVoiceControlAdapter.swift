@@ -114,6 +114,12 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         // Display and window geometry are read once per observation, not per node.
         let display = Self.activeDisplayBounds()
         let windowFrame = Self.frame(root)
+        // Screen text is read on its own actor while the walk runs here, under
+        // its own budget: a slow OCR pass never eats the Accessibility budget.
+        let screenTextTask: Task<[ScreenTextBlock], Never>? = {
+            guard let screenText, let windowFrame else { return nil }
+            return Task { await screenText.read(window: windowFrame) }
+        }()
         let walk = AXTreeWalk.run(
             roots: roots, source: LiveAXTreeSource(), display: display, window: windowFrame,
             focused: focused.map(AXNodeHandle.init), caps: walkCaps)
@@ -166,8 +172,8 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         var textSummary: [String] = []
         var screenTextBlocks = 0
         var screenTextTargets = 0
-        if let screenText, let windowFrame {
-            let blocks = await screenText.read(window: windowFrame)
+        if let screenTextTask {
+            let blocks = await Self.awaiting(screenTextTask, budget: Self.screenTextBudget) ?? []
             try Task.checkCancellation()
             screenTextBlocks = blocks.count
             let controls = pending.compactMap { item -> (label: String, frame: CGRect)? in
@@ -678,6 +684,19 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         "tab": 48, "escape": 53, "enter": 36, "return": 36,
         "left": 123, "right": 124, "down": 125, "up": 126, "backspace": 51, "delete": 117,
     ]
+    static let screenTextBudget: Duration = .milliseconds(1_200)
+    /// The task's value if it finishes within `budget`, else nil. The task keeps
+    /// running so its result is cached for the next observation.
+    static func awaiting<T: Sendable>(_ task: Task<T, Never>, budget: Duration) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await task.value }
+            group.addTask { try? await Task.sleep(for: budget); return nil }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
     /// Frames of this process's own on-screen windows (the Voice Control panel,
     /// the menu bar extra's popover). Text drawn there — the user's instruction,
     /// our status lines — is never the app's screen text.
