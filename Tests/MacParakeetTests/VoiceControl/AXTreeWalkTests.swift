@@ -193,6 +193,17 @@ final class AXTreeWalkTests: XCTestCase {
         XCTAssertEqual(labels(result), ["Save"])
     }
 
+    func testNamelessContainersWithIdenticalFramesAreNeverCollapsed() {
+        // Web layouts nest same-sized nameless groups; the second must keep its subtree.
+        let frame = CGRect(x: 120, y: 80, width: 800, height: 600)
+        let first = node("AXGroup", "", frame: frame, children: [node("AXButton", "Ask Gemini", press: true)])
+        let second = node(
+            "AXGroup", "", frame: frame,
+            children: [node("AXLink", "Pull requests", frame: CGRect(x: 200, y: 140, width: 100, height: 20), press: true)])
+        let nested = node("AXGroup", "", frame: frame, children: [first, second])
+        XCTAssertEqual(labels(walk(app(nested))), ["Ask Gemini", "Pull requests"])
+    }
+
     func testNodeCapStopsTheWalkAndReportsIncomplete() {
         let many = (0..<40).map {
             node(
