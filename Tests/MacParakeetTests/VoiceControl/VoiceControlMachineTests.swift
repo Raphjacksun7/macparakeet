@@ -12,6 +12,23 @@ final class VoiceControlMachineTests: XCTestCase {
         XCTAssertFalse(pressIDs.contains("search"))
     }
 
+    func testFocusedRowWithACommaOutsideAnOverlayIsPlain() {
+        // Gmail: a focused message row whose subject contains a comma is not a city picker.
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(id: "search", label: "Search mail", role: "AXTextField", value: "", operations: [.setValue, .key]),
+                VoiceControlTarget(
+                    id: "row", label: "Alice, Bob — Lunch Friday?, Inbox", role: "AXStaticText", operations: [.press],
+                    isFocused: true),
+                VoiceControlTarget(id: "compose", label: "Compose", role: "AXButton", operations: [.press]),
+            ])
+        XCTAssertEqual(VoiceControlSituation.classify(snapshot), .plain)
+        XCTAssertTrue(VoiceControlLegality.offeredTargets(in: snapshot).map(\.id).contains("compose"))
+        XCTAssertTrue(VoiceControlLegality.offeredKeys(in: snapshot).contains("return"))
+        XCTAssertNil(VoiceControlOutcomes.competingLandings(in: snapshot, goal: "click Compose"))
+    }
+
     func testFlightResultsWithAirportNamesAreNotASuggestionPicker() {
         let snapshot = VoiceControlSnapshot(
             contextID: "test", applicationName: "Google Chrome",
