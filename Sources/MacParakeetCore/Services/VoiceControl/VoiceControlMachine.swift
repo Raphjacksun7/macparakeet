@@ -8,17 +8,19 @@ public enum VoiceControlSituation: String, Sendable, Equatable {
 
     public static func classify(_ snapshot: VoiceControlSnapshot) -> VoiceControlSituation {
         if snapshot.targets.contains(where: VoiceControlLegality.isCalendarDay) { return .datePicker }
+        // A picker is an overlay, and an overlay announces itself through its
+        // chrome ("Where else?" is the field only the open overlay shows; the
+        // form's own "Where from?" / "Where to?" are not chrome). A focused row
+        // whose label merely contains a comma is not evidence: a Gmail subject
+        // line or a Finder path row does that too. Without chrome the surface is plain.
+        let overlayChrome = snapshot.targets.contains { $0.label.localizedStandardContains("Where else") }
+        guard overlayChrome else { return .plain }
         let cities = snapshot.targets.filter(VoiceControlLegality.isCitySuggestion)
-        if cities.contains(where: \.isFocused) { return .suggestionPicker }
-        let overlayChrome = snapshot.targets.contains {
-            $0.label.localizedStandardContains("Where else")
-        }
-        if !cities.isEmpty && overlayChrome { return .suggestionPicker }
+        if cities.contains(where: \.isFocused) || !cities.isEmpty { return .suggestionPicker }
         let focusedChoice = snapshot.targets.contains {
             $0.isFocused && $0.operations.contains(.press) && $0.role == "AXStaticText"
         }
-        if overlayChrome && focusedChoice { return .suggestionPicker }
-        return .plain
+        return focusedChoice ? .suggestionPicker : .plain
     }
 }
 
