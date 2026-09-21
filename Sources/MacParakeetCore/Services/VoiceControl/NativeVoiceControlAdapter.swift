@@ -114,16 +114,13 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         // Display and window geometry are read once per observation, not per node.
         let display = Self.activeDisplayBounds()
         let windowFrame = Self.frame(root)
-<<<<<<< HEAD
         // Screen text is read on its own actor while the walk runs here, under
         // its own budget: a slow OCR pass never eats the Accessibility budget.
         let screenTextTask: Task<[ScreenTextBlock], Never>? = {
             guard let screenText, let windowFrame else { return nil }
             return Task { await screenText.read(window: windowFrame) }
         }()
-=======
         let walkStarted = ContinuousClock.now
->>>>>>> origin/feat/voice-control-ax-walk
         let walk = AXTreeWalk.run(
             roots: roots, source: LiveAXTreeSource(), display: display, window: windowFrame,
             focused: focused.map(AXNodeHandle.init), caps: walkCaps)
@@ -274,17 +271,12 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         let summaryLines = [title] + text + (textSummary.isEmpty ? [] : ["Screen text:"] + textSummary)
         let snapshot = VoiceControlSnapshot(
             id: snapshotID, contextID: contextID, applicationName: name,
-<<<<<<< HEAD
             targets: targets, summary: String(summaryLines.joined(separator: "\n").prefix(4000)),
-            isComplete: complete)
-=======
-            targets: targets, summary: String(([title] + text).joined(separator: "\n").prefix(4000)),
             isComplete: complete,
             metrics: VoiceControlObservationMetrics(
                 nodesVisited: walk.visited, capped: !walk.complete,
                 walkMilliseconds: Int(walkStarted.duration(to: .now).components.seconds) * 1000
                     + Int(walkStarted.duration(to: .now).components.attoseconds / 1_000_000_000_000_000)))
->>>>>>> origin/feat/voice-control-ax-walk
         current = snapshot
         return snapshot
     }

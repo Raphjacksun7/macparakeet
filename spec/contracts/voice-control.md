@@ -35,9 +35,11 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   shallow static-text or image name; nameless groups are never candidates; the
   same role, label and frame is one control; node and time caps report
   `isComplete == false`. Display bounds and the window frame are read once per
-<<<<<<< HEAD
-  observation. Values, settability, selection and fingerprints are read only for
-  kept candidates.
+  observation; each node costs one batched attribute read. Values, settability,
+  selection and fingerprints are read only for kept candidates.
+  `VoiceControlSnapshot.metrics` records nodes visited, whether a cap cut the
+  walk, and the walk's milliseconds; the session log persists it per
+  observation and `latest.md` prints a `walk:` line.
 - Screen text is an optional second observation source (`ScreenTextReading`),
   enabled per user (`voiceControl.screenText.v1`) because it needs Screen
   Recording. Recognised lines that no Accessibility control explains, that lie
@@ -49,13 +51,6 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   while a suggestion or date picker is open and never appear in shareable
   diagnostics. No image is persisted or transmitted. Denied permission
   degrades silently to Accessibility-only observation.
-=======
-  observation; each node costs one batched attribute read. Values, settability,
-  selection and fingerprints are read only for kept candidates.
-  `VoiceControlSnapshot.metrics` records nodes visited, whether a cap cut the
-  walk, and the walk's milliseconds; the session log persists it per
-  observation and `latest.md` prints a `walk:` line.
->>>>>>> origin/feat/voice-control-ax-walk
 - Labelled pressables the app exposes but does not show are offered as targets
   with `isOffscreen == true`, deduplicated against visible labels. They are
   reachable by `AXPress` and by an exact spoken name only: legality filtering
