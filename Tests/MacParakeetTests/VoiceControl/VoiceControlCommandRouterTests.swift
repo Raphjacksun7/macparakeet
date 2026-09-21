@@ -51,6 +51,28 @@ final class VoiceControlCommandRouterTests: XCTestCase {
         let result = try await router.decide(goal: "type , please", snapshot: editable("hello"), history: [])
         XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: ", please")))
     }
+    func testTrailingPleaseIsSpokenFillerNotTypedText() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let result = try await router.decide(goal: "Type hello, please.", snapshot: editable(""), history: [])
+        XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: "hello")))
+        let spoken = try await router.decide(goal: "Type hello please", snapshot: editable(""), history: [])
+        XCTAssertEqual(spoken, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: "hello")))
+        let leading = try await router.decide(goal: "Please type hello.", snapshot: editable(""), history: [])
+        XCTAssertEqual(leading, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: "hello.")))
+    }
+    func testAmendedMultilineGoalDoesNotMatchTrailingTypeClause() {
+        let amended =
+            "Continue this task using the latest corrections. Original goal: type Paris\n"
+            + "User correction (overrides earlier conflicting requirements): Actually London"
+        XCTAssertNil(VoiceControlCommandRouter.typePayload(in: amended))
+        XCTAssertEqual(VoiceControlCommandRouter.typePayload(in: "now type hello"), "hello")
+    }
+    func testTrailingTypeClauseInsertsWithoutCallingJev() async throws {
+        let router = VoiceControlCommandRouter(fallback: MustNotDecide())
+        let result = try await router.decide(
+            goal: "Okay, I'm on Google now type hello", snapshot: editable(""), history: [])
+        XCTAssertEqual(result, .action(VoiceControlAction(operation: .insertText, targetID: "field", value: "hello")))
+    }
     func testBareUniqueLabelPressesWithoutAClickPrefix() async throws {
         let router = VoiceControlCommandRouter(fallback: MustNotDecide())
         let snapshot = VoiceControlSnapshot(

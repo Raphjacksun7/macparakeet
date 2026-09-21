@@ -2,7 +2,7 @@
 
 Research date: 2026-09-19. Status: **proposed experiment and release gates; no new measurements**. This document defines how to establish that the complete voice experience works. It does not declare the feature implemented, tested, or ready to ship.
 
-Inputs: [jev-voice-browser source review](jev-voice-browser.md), [macbrow source review](macbrow.md), [third-hand source review](third-hand.md), and targeted reading of existing MacParakeet test source at local HEAD `3f52977e272bf08c00cf53ef7f4db9068b070f46`. No applications, tests, model requests, microphone captures, or browser actions were run for this document.
+Inputs: [lessons from prior computer-use systems](references.md) and the MacParakeet Voice Control test surface. Current runtime honesty is in [evidence](evidence.md). This document defines gates; it does not declare them passed.
 
 ## The decision this evaluation must support
 
@@ -10,7 +10,7 @@ Ship an explicitly enabled feature when people can reliably express common comma
 
 `activation → speech → transcript commitment → candidate observation → route/arguments → policy → target revalidation → execution → observed postcondition → understandable feedback`.
 
-The earlier conversation reported five synthetic Jev calls taking **216–293 ms including network time**. Those were text/model requests, not measured audio endpointing, UI discovery, action execution, or verified task completion. The reference projects' author-reported timings also are not independent MacParakeet measurements. All numerical gates below are initial product targets subject to evidence, not claims about achieved performance.
+Five synthetic Jev Choice calls took **216–293 ms including network time**. Those were text/model requests, not measured audio endpointing, UI discovery, action execution, or verified task completion. Author-reported timings from other computer-use systems are not independent MacParakeet measurements. All numerical gates below are initial product targets subject to evidence, not claims about achieved performance.
 
 ## Evidence ledger and experiment controls
 
@@ -53,7 +53,7 @@ These test sources exist and were inspected; **they were not run in this researc
 
 **Do not assume “cancel” means the same thing in existing dictation insertion and computer control.** `testCancellationFlushesRemainderWithoutThrowing` asserts the full string is inserted after task cancellation. Reusing this path for a stop-sensitive command without an explicit boundary would defeat the proposed stop guarantee. This is an integration design issue, not a claim that the existing dictation behavior is faulty.
 
-Reference coverage also has limits: jev-voice-browser has text/model fixtures but no acoustic tests; macbrow lacks controller-state-machine tests; third-hand has useful pure helper/focus tests but no proof of voice or end-to-end termination. Their reviewed source findings supply regression scenarios below.
+Prior computer-use systems supply regression scenarios below. Their own tests do not prove MacParakeet Voice Control: text/model fixtures are not acoustic tests; helper/focus tests are not end-to-end termination.
 
 ## Representative workload
 

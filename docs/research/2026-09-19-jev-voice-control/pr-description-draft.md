@@ -10,9 +10,11 @@ It is not a stable-release claim. Live Google Flights results and the integrated
 
 ## What Jev is
 
-Jev (TypeSafe, pinned here at `jev-1.13.0`) is **System One judgment**, not an agent. It does not browse. It does not write AppleScript, JavaScript, or selectors. It does not prove that a task finished.
+Jev (TypeSafe, pinned here at `jev-1.13.0`) is **System One judgment**, not an agent. It does not browse. It does not write AppleScript, JavaScript, or selectors. It does not observe the Mac.
 
-One request is `state` plus named `questions`. The questions share that state, run **independently**, and cannot read each other’s answers. The primitive that matters for us is **Choice**: a closed map of options, each with criteria, returning a distribution and a confidence. Confidence is concentration of that distribution, not P(the user’s goal succeeded).
+It **can** choose among observed landings given the labels we send it. That is a verification-shaped Choice: after the host acts, which of these named states holds? It does not issue receipts. `finished` from Jev is a judgment over that text, not proof the user’s goal succeeded. Confidence is concentration of the distribution, not P(the search completed).
+
+One request is `state` plus named `questions`. The questions share that state, run **independently**, and cannot read each other’s answers. The primitive that matters for us is **Choice**: a closed map of options, each with criteria, returning a distribution and a confidence.
 
 Jev is strong at picking among named options given evidence. It is weak at arithmetic, dates, counting, generation, huge irrelevant trees, and **simulating a multi-step transition function**. That last weakness is the whole product question.
 
@@ -23,13 +25,13 @@ A practitioner put it cleanly: *predict outcomes, not steps toward an outcome.* 
 | “Play Tetris” | Plan and execute. This fails. |
 | “Which button to press” | The next micro-step. Better, still a simulation. |
 | “Where should this piece land” | An observed landing. The host compiles left/rotate/drop. |
-| “Should you win or lose” | A receipt. If we could compile any goal to that predicate, we would not need the model. |
+| “Should you win or lose” | Unbounded completion. If we could compile the goal to a check, we would run the check. Jev picking `finished` over truncated labels is not that check. |
 
 The unsolved “tree where one outcome changes the next” is not a Jev feature. Execute one compiled landing, re-observe, offer a new independent Choice. The graph lives in the host.
 
-Independent consults on this split: [GPT-6 Astra](docs/research/2026-09-19-jev-voice-control/consult-gpt6-astra-jev-architecture.md), [Fable 5.1 architecture](docs/research/2026-09-19-jev-voice-control/consult-fable-jev-architecture.md), [Avidlive Jev Engineering](docs/research/2026-09-19-jev-voice-control/avidlive-jev-engineering.md) with [Fable medium](docs/research/2026-09-19-jev-voice-control/consult-fable-avidlive-jev-engineering.md), and the Tetris note with [Fable medium](docs/research/2026-09-19-jev-voice-control/consult-fable-jev-outcome-choice.md). Canonical write-up: [decision architecture](docs/research/2026-09-19-jev-voice-control/jev-decision-architecture.md) and [predict outcomes](docs/research/2026-09-19-jev-voice-control/jev-outcome-choice.md).
+Canonical write-up: [architecture](docs/research/2026-09-19-jev-voice-control/architecture.md) and [product](docs/research/2026-09-19-jev-voice-control/product.md).
 
-What we refused to build: a seven-state universal Mac graph, Score-ranking every widget, a generative worker in the click loop, CDP, or asking Jev whether we “won.”
+What we refused to build: a seven-state universal Mac graph, Score-ranking every widget, a generative worker in the click loop, CDP, or treating Jev `finished` as a receipt.
 
 ---
 
@@ -57,7 +59,7 @@ flowchart TD
 
 `VoiceControlSituation` is recomputed from the snapshot: `plain`, `suggestionPicker`, or `datePicker`. Code lists **legal events**. Unique events skip the model. Several become one Jev `outcome` Choice over those ids, plus `insufficient_evidence` / `clarify`. Zero (no domain machine) is unconstrained Jev on legality-filtered page controls — still not allowed to pick Return or Search while a picker is open.
 
-Return is not a landing. Escape is how the host dismisses an overlay. Confirm only pay, delete, or send. `finished` from Jev is never a receipt.
+Return is not a landing. Escape is how the host dismisses an overlay. Confirm only pay, delete, or send. Accessibility postconditions are receipts. `finished` from Jev is a judgment over the text we sent, not one of those.
 
 ### What stays local
 
@@ -131,7 +133,7 @@ swift test --filter 'VoiceControl|DictationFlowCoordinator|TransformRunSerialize
 
 Five earlier synthetic Jev text-only calls took **216–293 ms** (median **238 ms**). That excludes speech, Accessibility, and verification. No p95 voice-to-action claim.
 
-[Findings](docs/research/2026-09-19-jev-voice-control/findings-2026-09-20.md) · [testing handoff](docs/research/2026-09-19-jev-voice-control/testing-handoff.md) · [capability matrix](docs/research/2026-09-19-jev-voice-control/release-scope.md)
+[Evidence](docs/research/2026-09-19-jev-voice-control/evidence.md) · [qualification](docs/research/2026-09-19-jev-voice-control/testing-handoff.md) · [capability matrix](docs/research/2026-09-19-jev-voice-control/release-scope.md)
 
 ---
 

@@ -298,15 +298,16 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             }
             let replacement: String
             if action.operation == .insertText {
-                guard let range = Self.selectedRange(node), beforeValue.utf16.count <= 64_000,
+                if let range = Self.selectedRange(node), beforeValue.utf16.count <= 64_000,
                     range.location >= 0, range.length >= 0,
                     range.location <= beforeValue.utf16.count,
                     range.length <= beforeValue.utf16.count - range.location
-                else {
-                    throw NativeVoiceControlError.unsupported
+                {
+                    replacement = (beforeValue as NSString).replacingCharacters(
+                        in: NSRange(location: range.location, length: range.length), with: supplied)
+                } else {
+                    replacement = beforeValue + supplied
                 }
-                replacement = (beforeValue as NSString).replacingCharacters(
-                    in: NSRange(location: range.location, length: range.length), with: supplied)
             } else {
                 replacement = supplied
             }
@@ -317,15 +318,43 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             // an NSTextView can flatten styling and attachments in the document.
             let usesSelection = action.operation == .insertText && Self.settable(node, kAXSelectedTextAttribute)
             let plainField = [kAXTextFieldRole, kAXComboBoxRole].contains(bound.target.role)
-            guard usesSelection || plainField else { throw NativeVoiceControlError.unsupported }
-            let status = try authority.perform {
-                AXUIElementSetAttributeValue(node,
-                    (usesSelection ? kAXSelectedTextAttribute : kAXValueAttribute) as CFString,
-                    (usesSelection ? supplied : replacement) as CFString)
+            if action.operation == .setValue {
+                guard plainField else { throw NativeVoiceControlError.unsupported }
             }
-            // Browser accessibility caches can lag a successful setter. Verify
-            // the same retained control with bounded reads; never retry the write.
-            let verified = await verifyTextValue(node, expected: replacement, authority: authority)
+            var status: AXError = .cannotComplete
+            var verified = false
+            if usesSelection || plainField {
+                status = try authority.perform {
+                    AXUIElementSetAttributeValue(node,
+                        (usesSelection ? kAXSelectedTextAttribute : kAXValueAttribute) as CFString,
+                        (usesSelection ? supplied : replacement) as CFString)
+                }
+                // Browser accessibility caches can lag a successful setter. Verify
+                // the same retained control with bounded reads; never retry the write.
+                verified = await verifyTextValue(node, expected: replacement, authority: authority)
+                if !verified, usesSelection, Self.settable(node, kAXValueAttribute) {
+                    status = try authority.perform {
+                        AXUIElementSetAttributeValue(
+                            node, kAXValueAttribute as CFString, replacement as CFString)
+                    }
+                    verified = await verifyTextValue(node, expected: replacement, authority: authority)
+                }
+            }
+            // Chrome webpage search often reports a successful AX write while
+            // AXValue stays empty and the field does not change. Type into the
+            // still-focused control only when the readable value did not move.
+            // A blind HID type into a field whose AXValue never reads back is a
+            // transition, not a verified value: the runner may continue on an
+            // ordinary step, but the receipt must not claim a readback it lacks.
+            var typedBlind = false
+            if !verified, action.operation == .insertText {
+                let current = Self.attribute(node, kAXValueAttribute) as? String ?? ""
+                if current == beforeValue {
+                    try typeUnicode(supplied, authority: authority)
+                    verified = await verifyTextValue(node, expected: replacement, authority: authority)
+                    typedBlind = !verified && beforeValue.isEmpty
+                }
+            }
             if plainField, verified {
                 undoEdit = (Element(value: node), expectedWindow, beforeValue, replacement, expectedPID, Date())
                 if bound.target.role == kAXComboBoxRole {
@@ -333,10 +362,17 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 }
             }
             if !plainField { undoEdit = nil }
+            if verified {
+                return VoiceControlReceipt(status: .verified, message: "Checked the text field after the change.")
+            }
+            if typedBlind {
+                return VoiceControlReceipt(
+                    status: .transitionObserved,
+                    message: "Typed into the focused field; the app does not expose the value for readback.")
+            }
             return VoiceControlReceipt(
-                status: verified ? .verified : .unknown,
-                message: verified ? "Checked the text field after the change."
-                    : status == .success ? "Text was dispatched; its result could not be verified." : "The app reported a text error; check whether it changed.")
+                status: .unknown,
+                message: status == .success ? "Text was dispatched; its result could not be verified." : "The app reported a text error; check whether it changed.")
         case .press, .select:
             let beforeTransition = transitionEvidence()
             try validateContext()
@@ -446,6 +482,37 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             if attempt < 5 { try? await Task.sleep(for: .milliseconds(60)) }
         }
         return false
+    }
+
+    /// Webpage fields often ignore AXSelectedText. Unicode HID posts are the
+    /// same path dictation already uses for Chrome, marked so hotkeys ignore them.
+    private func typeUnicode(_ text: String, authority: ActionAuthority) throws {
+        try authority.perform {
+            guard AXIsProcessTrusted() else { throw NativeVoiceControlError.permission }
+            guard let source = CGEventSource(stateID: .hidSystemState) else {
+                throw NativeVoiceControlError.unsupported
+            }
+            let units = Array(text.utf16)
+            var index = units.startIndex
+            while index < units.endIndex {
+                let end = units.index(index, offsetBy: 20, limitedBy: units.endIndex) ?? units.endIndex
+                var chunk = Array(units[index..<end])
+                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                    let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+                else {
+                    throw NativeVoiceControlError.unsupported
+                }
+                down.flags = []
+                up.flags = []
+                StreamingCursorEventMarker.mark(down)
+                StreamingCursorEventMarker.mark(up)
+                down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+                up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+                down.post(tap: .cghidEventTap)
+                up.post(tap: .cghidEventTap)
+                index = end
+            }
+        }
     }
 
     /// Bounded structural evidence, not a model's success assertion. Changes to

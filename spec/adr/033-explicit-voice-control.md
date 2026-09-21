@@ -75,7 +75,7 @@ The DEBUG experiment now includes:
 - Decision machine: `VoiceControlSituation` + enabled events. Unique events
   execute locally. Competing events are one Jev Choice. Return is not enabled
   while a suggestion or date picker is open. See
-  `docs/research/2026-09-19-jev-voice-control/jev-decision-architecture.md`.
+  `docs/research/2026-09-19-jev-voice-control/architecture.md`.
 - Joinable per-step traces plus one wide event per turn (`latest.md`). Local
   logs may include the instruction and control labels; Copy diagnostics omits
   them. Field values stay out.

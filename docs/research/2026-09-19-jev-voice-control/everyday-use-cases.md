@@ -34,4 +34,4 @@ In-page next field when no local plan matches; choosing among several similarly 
 
 ## What is later (researched, not this pass)
 
-Spoken replies (on-device `AVSpeechSynthesizer`), Jev CLI evals, numbered on-screen picks, OCR, TTS, generated scripts, CDP/extensions, multi-step LLM planners. See [north-star-computer-use.md](north-star-computer-use.md) and [north-star-adoption.md](north-star-adoption.md).
+Spoken replies (on-device `AVSpeechSynthesizer`), Jev CLI evals, numbered on-screen picks, OCR, generated scripts, CDP/extensions, multi-step LLM planners. See [later](later.md) and [references](references.md).

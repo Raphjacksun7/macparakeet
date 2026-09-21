@@ -2,7 +2,7 @@
 
 > **Governing implementation update — 2026-09-19:** The user's
 > [native Accessibility direction](../../docs/research/2026-09-19-jev-voice-control/native-accessibility-direction.md)
-> and [correction/recovery/observability direction](../../docs/research/2026-09-19-jev-voice-control/correction-recovery-observability-direction.md)
+> and [product](../../docs/research/2026-09-19-jev-voice-control/product.md)
 > supersede conflicting proposals below. Native AX owns browser and app control;
 > no extension setup, registration or packaging is required. Retain the experimental
 > panel, BYO Jev key and spoken Transform integration. Ordinary authorized goal
@@ -16,7 +16,7 @@
 **Status:** IMPLEMENTED behind `--enable-voice-control` (DEBUG). Native Flights results and microphone qualification remain open.  
 **Date:** 2026-09-19, updated 2026-09-20. **Owner:** MacParakeet product/core app.  
 **Origin:** User request for a full voice-control feature, deep source research, classifier/router mapping and excellent everyday UI/UX. Jev is the requested semantic decision engine.  
-**Evidence:** [Research index](../../docs/research/2026-09-19-jev-voice-control/README.md), [findings](../../docs/research/2026-09-19-jev-voice-control/findings-2026-09-20.md), [route catalog](../../docs/research/2026-09-19-jev-voice-control/routing-catalog.md), [evaluation](../../docs/research/2026-09-19-jev-voice-control/evaluation.md).
+**Evidence:** [Research index](../../docs/research/2026-09-19-jev-voice-control/README.md), [evidence](../../docs/research/2026-09-19-jev-voice-control/evidence.md), [route catalog](../../docs/research/2026-09-19-jev-voice-control/routing-catalog.md), [evaluation](../../docs/research/2026-09-19-jev-voice-control/evaluation.md).
 
 ## Product decision
 
@@ -209,7 +209,7 @@ A multi-step request carries a goal, allowed apps/sites/capabilities, supplied d
 
 ## Implementation sequence and verification ownership
 
-All new names below are proposed. Existing files are identified in the [platform report](../../docs/research/2026-09-19-jev-voice-control/platform-and-ecosystem.md). Use feature flag `AppFeatures.voiceControlEnabled` default off, with separate user consent. No production code is added by this plan.
+All new names below are proposed. Current types and ownership are in [architecture](../../docs/research/2026-09-19-jev-voice-control/architecture.md) and [tools](../../docs/research/2026-09-19-jev-voice-control/tools.md). Use feature flag `AppFeatures.voiceControlEnabled` default off, with separate user consent. No production code is added by this plan.
 
 | Slice | Deliverable and proposed location | Focused evidence |
 |---|---|---|

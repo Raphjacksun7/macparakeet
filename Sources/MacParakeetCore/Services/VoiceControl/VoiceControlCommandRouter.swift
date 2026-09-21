@@ -43,9 +43,9 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
             }
             return history.last?.receiptStatus == .verified ? .action(action) : .finished
         }
-        for prefix in ["type the words ", "type literally ", "type "] where lower.hasPrefix(prefix) {
+        if let rawPayload = Self.typePayload(in: command) {
             guard focused.count == 1 else { return .clarify("Focus one editable field before typing.") }
-            var payload = String(command.dropFirst(prefix.count))
+            var payload = Self.strippingTrailingPlease(rawPayload)
             if (focused[0].selectedText ?? "").isEmpty,
                 let value = focused[0].value, let last = value.last, !last.isWhitespace,
                 let first = payload.first, first.isLetter || first.isNumber
@@ -56,7 +56,7 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
                 return .clarify("Say the text to enter, up to 32,000 characters.")
             }
             if VoiceControlLocalTools.fieldAlreadyHolds(
-                String(command.dropFirst(prefix.count)), target: focused[0]),
+                payload.trimmingCharacters(in: .whitespaces), target: focused[0]),
                 (focused[0].selectedText ?? "").isEmpty
             {
                 return .information("That text is already in the field.")
@@ -203,9 +203,46 @@ public struct VoiceControlCommandRouter: VoiceControlDecisionEngine {
         // Only routes selected locally should terminate after one verified effect.
         // Exact labels that did not match originally may have entered the semantic
         // goal loop; use operation history rather than this predicate for those.
-        ["type ", "replace ", "rewrite ", "make this ", "translate this ", "summarize this"].contains(
-            where: lower.hasPrefix)
+        typePayload(in: lower) != nil
+            || ["replace ", "rewrite ", "make this ", "translate this ", "summarize this"].contains(
+                where: lower.hasPrefix)
             || ["undo", "undo that", "undo last edit", "scroll down", "scroll up"].contains(lower)
+    }
+
+    /// Leading `type ` and a trailing clause (`now type hello`) both insert locally.
+    static func typePayload(in command: String) -> String? {
+        let lower = command.lowercased()
+        let prefixes = ["type the words ", "type literally ", "type "]
+        for prefix in prefixes where lower.hasPrefix(prefix) {
+            return String(command.dropFirst(prefix.count))
+        }
+        // A trailing clause is a single spoken utterance. The runner's amended goal
+        // ("Original goal: …\nUser correction: …") is multi-line and must not be
+        // mistaken for "now type <everything after the first 'type '>".
+        guard !command.contains("\n") else { return nil }
+        var found: (offset: Int, prefix: String)?
+        for prefix in prefixes {
+            let needle = " " + prefix
+            guard let range = lower.range(of: needle, options: .backwards) else { continue }
+            let offset = lower.distance(from: lower.startIndex, to: range.lowerBound) + 1
+            if found.map({ offset > $0.offset }) ?? true {
+                found = (offset, prefix)
+            }
+        }
+        guard let found else { return nil }
+        let start = command.index(command.startIndex, offsetBy: found.offset + found.prefix.count)
+        return String(command[start...])
+    }
+
+    /// Spoken filler after the words to type. Keep `, please` when that is the text.
+    static func strippingTrailingPlease(_ payload: String) -> String {
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        guard let match = lower.range(of: #"[,.]?\s+please[.!?]*$"#, options: .regularExpression) else {
+            return payload
+        }
+        let kept = String(trimmed[..<match.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return kept.isEmpty ? payload : kept
     }
     static func requestedApplication(_ lower: String) -> String? {
         let prefixes = ["open up ", "switch to ", "go to ", "open "]
