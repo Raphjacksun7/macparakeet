@@ -36,6 +36,12 @@ struct VoiceControlPanelView: View {
                     .font(.callout)
                     .onChange(of: model.writingConsent) { _, enabled in if !enabled { model.onRevokeWritingConsent?() }
                     }
+                    Toggle(
+                        "Read on-screen text with Vision (needs Screen Recording; stays on this Mac)",
+                        isOn: $model.screenText
+                    )
+                    .font(.callout)
+                    .onChange(of: model.screenText) { _, enabled in model.onScreenTextChanged?(enabled) }
                     HotkeyRecorderView(
                         trigger: $model.holdTrigger,
                         defaultTrigger: VoiceControlCoordinator.holdTrigger,

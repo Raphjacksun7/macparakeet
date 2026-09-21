@@ -102,6 +102,14 @@ final class VoiceControlCoordinator {
         model.onRevokeWritingConsent = {
             UserDefaults.standard.set(false, forKey: "voiceControl.writingConsent.v1")
         }
+        model.onScreenTextChanged = { [weak self] enabled in
+            UserDefaults.standard.set(enabled, forKey: AppFeatures.voiceControlScreenTextDefaultsKey)
+            if enabled, !VisionScreenTextReader.hasScreenRecordingAccess {
+                _ = VisionScreenTextReader.requestScreenRecordingAccess()
+            }
+            // The adapter is built once at launch; a new one picks up the setting.
+            self?.model.message = "Restart Voice Control (End, then Start) to apply."
+        }
         model.onDisable = { [weak self] in
             guard let self else { return }
             self.consent.hasConsent = false

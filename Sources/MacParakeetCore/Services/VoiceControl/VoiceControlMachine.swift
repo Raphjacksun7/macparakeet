@@ -7,14 +7,16 @@ public enum VoiceControlSituation: String, Sendable, Equatable {
     case datePicker
 
     public static func classify(_ snapshot: VoiceControlSnapshot) -> VoiceControlSituation {
-        if snapshot.targets.contains(where: VoiceControlLegality.isCalendarDay) { return .datePicker }
-        let cities = snapshot.targets.filter(VoiceControlLegality.isCitySuggestion)
+        // Screen-text targets are pixels, not AX rows; they never open a picker.
+        let targets = snapshot.targets.filter { $0.role != "text" }
+        if targets.contains(where: VoiceControlLegality.isCalendarDay) { return .datePicker }
+        let cities = targets.filter(VoiceControlLegality.isCitySuggestion)
         if cities.contains(where: \.isFocused) { return .suggestionPicker }
-        let overlayChrome = snapshot.targets.contains {
+        let overlayChrome = targets.contains {
             $0.label.localizedStandardContains("Where else")
         }
         if !cities.isEmpty && overlayChrome { return .suggestionPicker }
-        let focusedChoice = snapshot.targets.contains {
+        let focusedChoice = targets.contains {
             $0.isFocused && $0.operations.contains(.press) && $0.role == "AXStaticText"
         }
         if overlayChrome && focusedChoice { return .suggestionPicker }
@@ -89,13 +91,15 @@ public enum VoiceControlLegality {
             return page
         case .suggestionPicker:
             return page.filter {
-                isCitySuggestion($0) || isOverlayChrome($0)
-                    || ($0.isFocused && $0.operations.contains(.key))
+                $0.role != "text"
+                    && (isCitySuggestion($0) || isOverlayChrome($0)
+                        || ($0.isFocused && $0.operations.contains(.key)))
             }
         case .datePicker:
             return page.filter {
-                isCalendarDay($0) || isOverlayChrome($0)
-                    || ($0.isFocused && $0.operations.contains(.key))
+                $0.role != "text"
+                    && (isCalendarDay($0) || isOverlayChrome($0)
+                        || ($0.isFocused && $0.operations.contains(.key)))
             }
         }
     }

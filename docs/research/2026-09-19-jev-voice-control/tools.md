@@ -19,6 +19,7 @@ Pay / delete / send still confirm after a compiled press. A numbered pick is not
 | Flights origin / destination / date / unique city / Search | domain plan | Competing cities are landings. |
 | `replace X with Y` | precise setValue | Missing or ambiguous source asks; it does not rewrite the whole field. |
 | `undo` | restore last owned text edit | Snapshot-local, time-bounded. |
+| `click Total $412` when only pixels show it | press on-screen text (`role: "text"`) | Opt-in Vision source. AX first; pixel click only when no handle. Receipt is transition-only. |
 | `click Note 900` when the row is scrolled out | AXPress by exact name (`isOffscreen`) | Never offered to Jev; receipt is transition-only. Dropped when a visible control has the same label. |
 | `scroll up` / `scroll down` | scroll | Asks which pane if several. |
 
