@@ -207,6 +207,29 @@ final class JevLeanRequestTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    func testRegionHintsNameTheGridCellAndTellTwinsApart() async throws {
+        let window = CGRect(x: 100, y: 50, width: 900, height: 600)
+        XCTAssertEqual(VoiceControlTarget.region(of: CGRect(x: 110, y: 60, width: 40, height: 20), in: window), "top-left")
+        XCTAssertEqual(VoiceControlTarget.region(of: CGRect(x: 530, y: 330, width: 40, height: 20), in: window), "middle-center")
+        XCTAssertEqual(VoiceControlTarget.region(of: CGRect(x: 950, y: 620, width: 40, height: 20), in: window), "bottom-right")
+        XCTAssertNil(VoiceControlTarget.region(of: nil, in: window))
+        XCTAssertNil(VoiceControlTarget.region(of: .zero, in: nil))
+        let twins = VoiceControlSnapshot(
+            contextID: "ax:9", applicationName: "Mail",
+            targets: [
+                VoiceControlTarget(id: "n:1", label: "Delete", role: "AXButton", operations: [.press], region: "top-left"),
+                VoiceControlTarget(id: "n:2", label: "Delete", role: "AXButton", operations: [.press], region: "bottom-right"),
+            ])
+        let requests = Requests()
+        _ = try await client(choices: ["kind": "finished"], requests: requests).decide(goal: "delete", snapshot: twins, history: [])
+        let bodies = await requests.bodies
+        let criteria = try XCTUnwrap((bodies.first?["questions"] as? [String: [String: Any]])?["target"]?["criteria"] as? [String: String])
+        XCTAssertEqual(criteria["n:1"], "button 'Delete' (top-left)")
+        XCTAssertEqual(criteria["n:2"], "button 'Delete' (bottom-right)")
+        let wire = try XCTUnwrap(((bodies.first?["state"] as? [String: Any])?["observation"] as? [String: Any])?["targets"] as? [[String: Any]])
+        XCTAssertEqual(wire.first?["region"] as? String, "top-left")
+    }
+
     private actor Observed {
         private(set) var traces: [VoiceControlDecisionTrace] = []
         func append(_ trace: VoiceControlDecisionTrace) { traces.append(trace) }

@@ -161,7 +161,8 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 isNavigation: Self.isOrdinaryControl(role: role, pressable: operations.contains(.press)),
                 isFocused: entry.isFocused,
                 selectedText: AXTreeWalk.textRoles.contains(role) ? Self.completeSelection(node) : nil,
-                valueIsComplete: value.count <= 500)
+                valueIsComplete: value.count <= 500,
+                region: VoiceControlTarget.region(of: entry.facts.frame, in: windowFrame))
             pending.append(
                 (target,
                  BoundTarget(
@@ -186,7 +187,10 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 excludedFrames: secureFrames + Self.ownWindowFrames(), existingText: text)
             // Text targets follow the page: in a browser with web content they are web content.
             let textInWeb = isBrowser && pending.contains { $0.inWeb }
-            for (target, block) in zip(result.targets, result.blocks) {
+            for (bare, block) in zip(result.targets, result.blocks) {
+                let target = VoiceControlTarget(
+                    id: bare.id, label: bare.label, role: bare.role, operations: bare.operations,
+                    isNavigation: bare.isNavigation, region: VoiceControlTarget.region(of: block.frame, in: windowFrame))
                 pending.append(
                     (target,
                      BoundTarget(
@@ -227,7 +231,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 operations: item.target.operations, isNavigation: item.target.isNavigation,
                 isFocused: item.target.isFocused, selectedText: item.target.selectedText,
                 valueIsComplete: item.target.valueIsComplete, consequence: item.target.consequence,
-                isOffscreen: item.target.isOffscreen)
+                isOffscreen: item.target.isOffscreen, region: item.target.region)
             handles[id] = BoundTarget(
                 element: item.bound.element, target: target, fingerprint: item.bound.fingerprint,
                 frame: item.bound.frame, pixelPoint: item.bound.pixelPoint)

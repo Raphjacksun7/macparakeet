@@ -20,19 +20,24 @@ public struct VoiceControlTarget: Codable, Sendable, Equatable, Identifiable {
     /// parked off the display, an auto-hidden Dock). Reachable by `AXPress` and by
     /// an exact spoken name only; never offered to the model.
     public let isOffscreen: Bool
+    /// Where the control sits in its window, as one of nine words (`top-left` …
+    /// `bottom-right`). Cheap to compute, and the one thing that tells two
+    /// identically labelled controls apart in a criteria string.
+    public let region: String?
     public init(
         id: String, label: String, role: String, value: String? = nil,
         operations: Set<VoiceControlOperation>, isNavigation: Bool = false,
         isFocused: Bool = false, selectedText: String? = nil, valueIsComplete: Bool = true,
-        consequence: VoiceControlConsequence? = nil, isOffscreen: Bool = false
+        consequence: VoiceControlConsequence? = nil, isOffscreen: Bool = false, region: String? = nil
     ) {
         self.id = id; self.label = label; self.role = role; self.value = value
         self.operations = operations; self.isNavigation = isNavigation
         self.isFocused = isFocused; self.selectedText = selectedText; self.valueIsComplete = valueIsComplete
-        self.consequence = consequence; self.isOffscreen = isOffscreen
+        self.consequence = consequence; self.isOffscreen = isOffscreen; self.region = region
     }
     private enum CodingKeys: String, CodingKey {
         case id, label, role, value, operations, isNavigation, isFocused, selectedText, valueIsComplete, consequence, isOffscreen
+        case region
     }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -47,6 +52,15 @@ public struct VoiceControlTarget: Codable, Sendable, Equatable, Identifiable {
         valueIsComplete = try container.decode(Bool.self, forKey: .valueIsComplete)
         consequence = try container.decodeIfPresent(VoiceControlConsequence.self, forKey: .consequence)
         isOffscreen = try container.decodeIfPresent(Bool.self, forKey: .isOffscreen) ?? false
+        region = try container.decodeIfPresent(String.self, forKey: .region)
+    }
+
+    /// Nine-cell grid position of `frame` inside `window`; nil without both.
+    public static func region(of frame: CGRect?, in window: CGRect?) -> String? {
+        guard let frame, let window, window.width > 0, window.height > 0 else { return nil }
+        let column = min(2, max(0, Int(3 * (frame.midX - window.minX) / window.width)))
+        let row = min(2, max(0, Int(3 * (frame.midY - window.minY) / window.height)))
+        return ["top", "middle", "bottom"][row] + "-" + ["left", "center", "right"][column]
     }
 }
 

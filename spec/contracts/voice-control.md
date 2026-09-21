@@ -280,7 +280,9 @@ or date picker is open. Jev is never offered `role=url`
 destinations. When no local route or enabled event applies, the open-ended
 request is one disjoint question set — `kind` (`press` / `fill` / `scroll` /
 `finished` / `none`), one `target` head over every legality-filtered control,
-a `value` head only for a focused editable control, an advisory `consequence`
+a `value` head only for a focused editable control (target criteria carry a
+nine-cell region hint such as `top-left` so identically labelled controls
+read apart), an advisory `consequence`
 head, and `direction` only when something scrolls — gated on `min(kind,
 target)` when a target is named. Filling an unfocused field costs one more
 single-head `value` request. Pages over 200 legal controls are truncated by

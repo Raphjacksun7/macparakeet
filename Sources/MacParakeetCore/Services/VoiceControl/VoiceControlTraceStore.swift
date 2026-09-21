@@ -9,6 +9,7 @@ public struct VoiceControlPersistedTarget: Codable, Sendable, Equatable {
     public var isNavigation: Bool
     public var valueIsComplete: Bool
     public var hasValue: Bool
+    public var region: String?
 }
 
 /// One observation as a replayable fixture. Field values and selected text
@@ -37,7 +38,7 @@ public struct VoiceControlPersistedObservation: Codable, Sendable, Equatable {
                     id: target.id, label: target.label, role: target.role, value: target.hasValue ? "" : nil,
                     operations: Set(target.operations.compactMap(VoiceControlOperation.init(rawValue:))),
                     isNavigation: target.isNavigation, isFocused: target.isFocused,
-                    valueIsComplete: target.valueIsComplete)
+                    valueIsComplete: target.valueIsComplete, region: target.region)
             },
             summary: summary ?? "", isComplete: complete, metrics: metrics)
     }
@@ -141,7 +142,7 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
                     id: target.id, role: target.role, label: Self.clip(target.label, 240),
                     operations: target.operations.map(\.rawValue).sorted(),
                     isFocused: target.isFocused, isNavigation: target.isNavigation,
-                    valueIsComplete: target.valueIsComplete, hasValue: target.value != nil)
+                    valueIsComplete: target.valueIsComplete, hasValue: target.value != nil, region: target.region)
             },
             snapshotID: snapshot.id, contextID: snapshot.contextID,
             summary: Self.clip(snapshot.summary, 4_000), metrics: snapshot.metrics)

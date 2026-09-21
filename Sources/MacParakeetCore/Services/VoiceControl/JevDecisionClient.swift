@@ -216,6 +216,7 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
             if target.isFocused { hints.append("focused") }
             let editable = target.operations.contains(.setValue) || target.operations.contains(.insertText)
             if editable { hints.append((target.value ?? "").isEmpty ? "empty" : "has a value") }
+            if let region = target.region { hints.append(region) }
             let suffix = hints.isEmpty ? "" : " (" + hints.joined(separator: ", ") + ")"
             criteria[target.id] = "\(roleWord(target.role)) '\(target.label)'\(suffix)"
         }
@@ -238,7 +239,7 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
                     id: $0.id, label: $0.label, role: $0.role, value: $0.value,
                     operations: $0.operations.subtracting([.key]), isNavigation: $0.isNavigation,
                     isFocused: $0.isFocused, selectedText: nil, valueIsComplete: $0.valueIsComplete,
-                    consequence: $0.consequence)
+                    consequence: $0.consequence, region: $0.region)
             },
             summary: snapshot.summary, isComplete: snapshot.isComplete)
     }
