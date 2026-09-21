@@ -6,7 +6,7 @@ Ship the silent, native loop first. Nothing below is required to keep unique loc
 
 - One live native Flights search through to a results list
 - Integrated hold-to-talk microphone path, with dictation / Transform regression
-- Unconstrained Jev on generic pages is still `operation` + `target_*`. Documented leftover; do not pretend a footer link is a landing
+- The open-ended request on generic pages is `kind` / `target` / focused `value`; a generic footer link is still not a landing. Region hints (`top-left`) in `target` criteria wait for frames on the wire
 - Spoken-tool presses that return Accessibility “unknown” still pause. Completing them needs a compilation origin so plan-driven presses keep pausing
 - Join-space for `type` assumes the caret is at the end of the field value
 

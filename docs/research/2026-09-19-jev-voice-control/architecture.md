@@ -8,7 +8,7 @@ Observe Accessibility
     → Compile a host tool if unique
       → several names     → numbered local pick
       → several landings  → one Jev Choice over those ids
-      → nothing compiles  → Jev among legality-filtered controls (no keystrokes)
+      → nothing compiles  → one small question set: kind / target / focused value (no keystrokes)
         → execute once → verify on a fresh snapshot
 ```
 
@@ -47,7 +47,7 @@ Jev never receives `role=url` destinations. Code owns allowlisted sites.
 | Flights fill / unique city / overlay Escape / Search | host `VoiceControlFlightPlan` |
 | Competing unfocused city rows | Jev Choice over those events |
 | Pay / delete / send | confirm, then host |
-| Unfamiliar in-page control | Jev among legality-filtered targets; no keystrokes |
+| Unfamiliar in-page control | Jev: `kind` (press / fill / scroll / finished / none) + one `target` head over legality-filtered controls + `value` only for a focused field; gate `min(kind, target)`; pages over 200 controls truncated by priority, never failed |
 
 Malformed, timed-out, or low-confidence Jev answers execute nothing. Never substitute the first candidate.
 
