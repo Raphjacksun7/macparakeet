@@ -35,8 +35,11 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   shallow static-text or image name; nameless groups are never candidates; the
   same role, label and frame is one control; node and time caps report
   `isComplete == false`. Display bounds and the window frame are read once per
-  observation. Values, settability, selection and fingerprints are read only for
-  kept candidates.
+  observation; each node costs one batched attribute read. Values, settability,
+  selection and fingerprints are read only for kept candidates.
+  `VoiceControlSnapshot.metrics` records nodes visited, whether a cap cut the
+  walk, and the walk's milliseconds; the session log persists it per
+  observation and `latest.md` prints a `walk:` line.
 - Labelled pressables the app exposes but does not show are offered as targets
   with `isOffscreen == true`, deduplicated against visible labels. They are
   reachable by `AXPress` and by an exact spoken name only: legality filtering
