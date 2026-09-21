@@ -8,6 +8,8 @@ public struct VoiceControlInboxCommand: Equatable, Sendable {
     public var action: Action
     public var text: String
     public var activate: String? = nil
+    /// Observe, route and decide, then report the compiled action without executing it.
+    public var dryRun: Bool = false
 
     public static func parse(_ raw: String) -> VoiceControlInboxCommand? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -21,7 +23,8 @@ public struct VoiceControlInboxCommand: Equatable, Sendable {
             if (action == .submit || action == .revise) && text.isEmpty { return nil }
             let activate = (json["activate"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             return VoiceControlInboxCommand(
-                action: action, text: text, activate: activate?.isEmpty == false ? activate : nil)
+                action: action, text: text, activate: activate?.isEmpty == false ? activate : nil,
+                dryRun: json["dryRun"] as? Bool ?? false)
         }
         return VoiceControlInboxCommand(action: .submit, text: trimmed, activate: nil)
     }

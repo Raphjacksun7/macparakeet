@@ -8,6 +8,51 @@ public protocol VoiceControlTraceSink: Sendable {
     func record(_ record: VoiceControlTraceRecord) async
     func noteObservation(_ snapshot: VoiceControlSnapshot) async
     func noteStatus(phase: String, message: String) async
+    func noteDecision(_ decision: VoiceControlDecisionTrace) async
+}
+
+public extension VoiceControlTraceSink {
+    func noteDecision(_ decision: VoiceControlDecisionTrace) async {}
+}
+
+/// One model request as the decision engine saw it: every head, every
+/// probability. Keys are snapshot-local target ids, closed operation/outcome
+/// tokens, or span indices (`v3`) — never labels, spans, field values or the
+/// instruction. This is what turns "Jev picked n:15" into a diagnosable event.
+public struct VoiceControlDecisionTrace: Codable, Sendable, Equatable {
+    public struct Head: Codable, Sendable, Equatable {
+        public let choice: String
+        /// Distribution concentration, not probability of task success.
+        public let confidence: Double
+        public let probabilities: [String: Double]
+        public init(choice: String, confidence: Double, probabilities: [String: Double]) {
+            self.choice = choice; self.confidence = confidence; self.probabilities = probabilities
+        }
+        /// The `limit` most probable options, highest first.
+        public func top(_ limit: Int = 3) -> [(option: String, probability: Double)] {
+            probabilities.sorted { lhs, rhs in
+                lhs.value != rhs.value ? lhs.value > rhs.value : lhs.key < rhs.key
+            }.prefix(limit).map { ($0.key, $0.value) }
+        }
+    }
+    public let at: Date
+    public let model: String
+    /// `outcome` for an enabled-events Choice, `unconstrained` for the leftover request.
+    public let kind: String
+    public let situation: String?
+    public let heads: [String: Head]
+    public let requestBytes: Int
+    public let latencyMilliseconds: Int
+    /// Closed token: `action`, `clarify`, `finished`, `invalid`.
+    public let resolution: String
+    public init(
+        at: Date = Date(), model: String, kind: String, situation: String?, heads: [String: Head],
+        requestBytes: Int, latencyMilliseconds: Int, resolution: String
+    ) {
+        self.at = at; self.model = model; self.kind = kind; self.situation = situation
+        self.heads = heads; self.requestBytes = requestBytes
+        self.latencyMilliseconds = latencyMilliseconds; self.resolution = resolution
+    }
 }
 
 /// Content-minimized shareable diagnostics. Never stores commands, field values,
@@ -88,6 +133,32 @@ public struct VoiceControlTurnSummary: Codable, Sendable, Equatable {
     public var recordCount: Int
     public var localDecisions: Int
     public var jevDecisions: Int
+    /// Mean and max milliseconds per stage over the records that timed it.
+    public var timing: [String: VoiceControlStageTiming]?
+
+    public static let timedStages = ["observation", "decision", "dispatch", "verification"]
+
+    public static func timing(from records: [VoiceControlTraceRecord]) -> [String: VoiceControlStageTiming] {
+        var result: [String: VoiceControlStageTiming] = [:]
+        for stage in timedStages {
+            let samples = records.filter { $0.stage == stage }.compactMap(\.durationMilliseconds)
+            guard !samples.isEmpty else { continue }
+            result[stage] = VoiceControlStageTiming(
+                count: samples.count, meanMilliseconds: samples.reduce(0, +) / samples.count,
+                maxMilliseconds: samples.max() ?? 0)
+        }
+        return result
+    }
+
+    /// `timing: observation 412ms (max 980, n=3)  decision 240ms …` in stage order.
+    public var timingLine: String? {
+        guard let timing, !timing.isEmpty else { return nil }
+        let parts = Self.timedStages.compactMap { stage -> String? in
+            guard let stat = timing[stage] else { return nil }
+            return "\(stage) \(stat.meanMilliseconds)ms (max \(stat.maxMilliseconds), n=\(stat.count))"
+        }
+        return "timing: " + parts.joined(separator: "  ")
+    }
 
     public static func make(
         records: [VoiceControlTraceRecord], observations: [VoiceControlPersistedObservation],
@@ -116,7 +187,8 @@ public struct VoiceControlTurnSummary: Codable, Sendable, Equatable {
             observationCount: observations.count,
             recordCount: records.count,
             localDecisions: decisions.filter { $0.actor == "local" }.count,
-            jevDecisions: decisions.filter { $0.actor == "jev" }.count)
+            jevDecisions: decisions.filter { $0.actor == "jev" }.count,
+            timing: Self.timing(from: records))
     }
 
     public func shareable() -> VoiceControlTurnSummary {
@@ -152,6 +224,7 @@ public struct VoiceControlTurnSummary: Codable, Sendable, Equatable {
                 "observation: \(lastObservationComplete ? "complete" : "partial") targets=\(lastTargetCount ?? 0)")
         }
         lines.append("observations: \(observationCount) records: \(recordCount)")
+        if let timingLine { lines.append(timingLine) }
         return lines.joined(separator: "\n") + "\n"
     }
 
@@ -161,7 +234,7 @@ public struct VoiceControlTurnSummary: Codable, Sendable, Equatable {
             "paused", "cancelled", "direct_effect_verified", "completion_inferred",
             "completion_inferred_partial_observation", "exhausted", "no_progress",
             "active_time_exhausted", "confirmation_expired", "unoffered_target",
-            "commitment_outcome_unverified",
+            "commitment_outcome_unverified", "dry_run",
         ].contains(record.outcome)
             || (record.stage == "task" && record.outcome != "started" && record.outcome != "continued")
     }
@@ -174,6 +247,15 @@ public struct VoiceControlTurnSummary: Codable, Sendable, Equatable {
         if let actor = record.actor { parts.append("actor=\(actor)") }
         if let route = record.route { parts.append("route=\(route)") }
         return parts.joined(separator: " ")
+    }
+}
+
+public struct VoiceControlStageTiming: Codable, Sendable, Equatable {
+    public var count: Int
+    public var meanMilliseconds: Int
+    public var maxMilliseconds: Int
+    public init(count: Int, meanMilliseconds: Int, maxMilliseconds: Int) {
+        self.count = count; self.meanMilliseconds = meanMilliseconds; self.maxMilliseconds = maxMilliseconds
     }
 }
 

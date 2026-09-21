@@ -19,6 +19,10 @@ Ship the silent, native loop first. Nothing below is required to keep unique loc
 - One named missing-slot question (“Need a destination”)
 - Semantic freshness guards and loop-breaking on (action, screen signature), excluding clocks
 
+## Transplants from typesafe-computer-use
+
+Source review and plan: `docs/research/2026-09-20-typesafe-computer-use/` and `plans/active/2026-09-20-voice-control-transplants.md`. Done: probabilities in the log, replayable observations, `voice-control replay`, inbox dry run, timing line. Next: pure `AXTreeWalk` over an injectable source with off-screen pressables; lean Tier-3 request (`kind` / `target` / focused `value`); on-device Vision OCR as a second source of targets and state.
+
 ## Spoken replies
 
 On-device `AVSpeechSynthesizer`. Short templated lines: “Need a destination”, “Done — check the results.” Do not read page contents, field values, or API errors. Hold-to-talk or Stop cancels speech. No ElevenLabs, no cloud TTS, no personality voice.
