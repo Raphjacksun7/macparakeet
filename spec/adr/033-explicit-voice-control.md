@@ -84,3 +84,27 @@ The DEBUG experiment now includes:
 
 Native Google Flights search completion and integrated microphone
 qualification remain separate from this implementation decision.
+
+## Observation amendment — 2026-09-20: two on-device sources
+
+Accessibility is the primary and authoritative observation source. On-device
+Vision OCR of the frontmost window is an optional **second** source, opt-in per
+user because it needs Screen Recording permission.
+
+- **Targets.** Recognised text that no Accessibility control already names
+  becomes a `role: "text"` pressable target with a private pixel centre.
+  Accessibility handles are always preferred; a pixel click is the fallback
+  only when no handle exists, and its receipt is `unknown` unless transition
+  evidence changes. Text targets are offered to Jev only on a plain surface,
+  never while a suggestion or date picker is open.
+- **State.** Window text in reading order joins the snapshot `summary` under
+  the existing cloud-context consent, so Jev and local matchers see prices,
+  dates, status lines and result rows the app never labelled.
+- **Boundaries.** Pixels never leave the Mac. No image is persisted, not even
+  for local debugging. Lines inside secure fields' frames and lines containing
+  the secure-word list are dropped before they become targets or state. The
+  4,000-character summary cap is unchanged. Screen text is local-log only and
+  never enters shareable diagnostics.
+- **Not decided here.** Default-on. That waits for replay-corpus measurements
+  of latency and clarify rate with and without screen text, per the plan in
+  `plans/active/2026-09-20-voice-control-observability-perception-decision.md`.
