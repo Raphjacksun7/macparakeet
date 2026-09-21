@@ -80,6 +80,7 @@ final class ScreenTextSourceTests: XCTestCase {
                     id: "city", label: "Zurich, Switzerland", role: "AXStaticText", operations: [.press],
                     isFocused: true),
                 VoiceControlTarget(id: "search", label: "Search flights", role: "AXButton", operations: [.press]),
+                VoiceControlTarget(id: "else", label: "Where else?", role: "AXComboBox", operations: [.setValue, .press]),
                 textTarget,
             ])
         XCTAssertEqual(VoiceControlSituation.classify(picker), .suggestionPicker)
