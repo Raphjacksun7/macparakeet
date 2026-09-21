@@ -45,13 +45,32 @@ public struct VoiceControlDecisionTrace: Codable, Sendable, Equatable {
     public let latencyMilliseconds: Int
     /// Closed token: `action`, `clarify`, `finished`, `invalid`.
     public let resolution: String
+    /// Controls dropped to stay under the request ceiling. Non-zero explains an
+    /// `insufficient_evidence` or `none` that a fuller page would not have given.
+    public let truncatedTargets: Int
     public init(
         at: Date = Date(), model: String, kind: String, situation: String?, heads: [String: Head],
-        requestBytes: Int, latencyMilliseconds: Int, resolution: String
+        requestBytes: Int, latencyMilliseconds: Int, resolution: String, truncatedTargets: Int = 0
     ) {
         self.at = at; self.model = model; self.kind = kind; self.situation = situation
         self.heads = heads; self.requestBytes = requestBytes
         self.latencyMilliseconds = latencyMilliseconds; self.resolution = resolution
+        self.truncatedTargets = truncatedTargets
+    }
+    private enum CodingKeys: String, CodingKey {
+        case at, model, kind, situation, heads, requestBytes, latencyMilliseconds, resolution, truncatedTargets
+    }
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        at = try container.decode(Date.self, forKey: .at)
+        model = try container.decode(String.self, forKey: .model)
+        kind = try container.decode(String.self, forKey: .kind)
+        situation = try container.decodeIfPresent(String.self, forKey: .situation)
+        heads = try container.decode([String: Head].self, forKey: .heads)
+        requestBytes = try container.decode(Int.self, forKey: .requestBytes)
+        latencyMilliseconds = try container.decode(Int.self, forKey: .latencyMilliseconds)
+        resolution = try container.decode(String.self, forKey: .resolution)
+        truncatedTargets = try container.decodeIfPresent(Int.self, forKey: .truncatedTargets) ?? 0
     }
 }
 
