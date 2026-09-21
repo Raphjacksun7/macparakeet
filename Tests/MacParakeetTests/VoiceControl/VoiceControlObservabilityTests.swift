@@ -46,6 +46,7 @@ final class VoiceControlObservabilityTests: XCTestCase {
                     id: "c0", label: "London, United Kingdom", role: "AXStaticText", operations: [.press]),
                 VoiceControlTarget(
                     id: "c1", label: "London, Ontario", role: "AXStaticText", operations: [.press], isFocused: true),
+                VoiceControlTarget(id: "else", label: "Where else?", role: "AXComboBox", operations: [.setValue, .press]),
             ])
         _ = try await client.decide(goal: "fly to London", snapshot: snapshot, history: [], events: events)
         let traces = await observed.traces
@@ -98,9 +99,7 @@ final class VoiceControlObservabilityTests: XCTestCase {
         XCTAssertEqual(trace.kind, "unconstrained")
         XCTAssertEqual(trace.resolution, "clarify")
         XCTAssertEqual(trace.situation, "plain")
-        XCTAssertTrue(trace.heads.keys.contains("operation"))
-        XCTAssertTrue(trace.heads.keys.contains("target_press"))
-        XCTAssertTrue(trace.heads.keys.contains("consequence"))
+        XCTAssertEqual(Set(trace.heads.keys), ["kind", "target", "consequence"])
     }
 
     // MARK: Trace store

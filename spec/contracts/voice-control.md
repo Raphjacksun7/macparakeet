@@ -277,7 +277,17 @@ the Google Flights form plan (trip type, origin, destination, date, unique
 autocomplete, overlay Escape, Search). Competing overlay suggestions become
 enabled events for one Jev Choice; Return is not enabled while a suggestion
 or date picker is open. Jev is never offered `role=url`
-destinations. Literal mode treats utterances as text; isolated
+destinations. When no local route or enabled event applies, the open-ended
+request is one disjoint question set — `kind` (`press` / `fill` / `scroll` /
+`finished` / `none`), one `target` head over every legality-filtered control,
+a `value` head only for a focused editable control, an advisory `consequence`
+head, and `direction` only when something scrolls — gated on `min(kind,
+target)` when a target is named. Filling an unfocused field costs one more
+single-head `value` request. Pages over 200 legal controls are truncated by
+priority (focused, editable, then traversal order) and the trace records how
+many were dropped; the turn does not fail. Consequence confidence never blocks
+or prompts; local policy decides pay/delete/send. Calendar days are matched by
+a deterministic spoken-date parser, not token overlap. Literal mode treats utterances as text; isolated
 `command mode` / `stop typing` exits and `command stop` pauses. Isolated utterances `typing mode`, `start typing`, `activate type`, `type mode`, `literal mode`, and `dictation mode` enter. `type literally command mode`
 enters those words. While a pay, delete, or send confirmation is pending, only isolated `yes` / `confirm` / `confirm this action` authorize; `ok` and `okay` do not. Isolated `no` / `cancel` / `cancel task` decline. Consecutive typed insertions join with a space when appending at the caret. Ambiguous visible names become a numbered local pick (`1` / `two` / `the second one`); `the other one` is not option 1. A unique visible name on a plain window is itself a press (`Save` or `the Save button`); `press return` sends a key, while `click Return` presses a control. A focused field that already holds the requested type payload is left unchanged. Numbered picks rematch by id and label after the next observation. Confirmation reobserves if the pending snapshot expired. Prefix handling must preserve the payload rather than
 shortening or stripping arbitrary fillers. Selected-text rewriting uses the

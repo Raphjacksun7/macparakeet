@@ -272,11 +272,22 @@ public struct VoiceControlFlightPlan: Equatable, Sendable {
     }
 
     private func bestDateSuggestion(_ value: String, in snapshot: VoiceControlSnapshot) -> VoiceControlTarget? {
-        let tokens = value.split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        guard tokens.count >= 2 else { return nil }
-        let matches = snapshot.targets.filter { target in
-            target.operations.contains(.press) && target.role != "url" && target.role != "application"
-                && tokens.allSatisfy { token in containsToken(target.label, token) }
+        let pressable = snapshot.targets.filter {
+            $0.operations.contains(.press) && $0.role != "url" && $0.role != "application"
+        }
+        let matches: [VoiceControlTarget]
+        if let spoken = SpokenDateParser.firstDate(in: value) {
+            let calendar = Calendar.current
+            matches = pressable.filter { target in
+                guard let labelDate = SpokenDateParser.firstDate(in: target.label) else { return false }
+                return calendar.isDate(labelDate, inSameDayAs: spoken)
+            }
+        } else {
+            let tokens = value.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+            guard tokens.count >= 2 else { return nil }
+            matches = pressable.filter { target in
+                tokens.allSatisfy { token in containsToken(target.label, token) }
+            }
         }
         let departure = matches.filter { $0.label.localizedStandardContains("departure date") }
         if departure.count == 1 { return departure[0] }
