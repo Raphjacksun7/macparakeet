@@ -270,11 +270,13 @@ final class VoiceControlCoordinator {
         if runner != nil { show(); return true }
         acceptingEvents = true
         sessionGeneration += 1
+        let traces = traces
         let engine = JevDecisionClient(
             apiKey: key,
             consent: {
                 UserDefaults.standard.bool(forKey: "voiceControl.cloudContextConsent.v1")
-            })
+            },
+            onDecision: { decision in await traces.noteDecision(decision) })
         let router = VoiceControlCommandRouter(
             fallback: engine, rewrite: rewrite,
             selectionAtInvocation: { [weak self] in
@@ -431,7 +433,7 @@ final class VoiceControlCoordinator {
             self.show()
             self.skipInvocationSnapshot = true
             switch command.action {
-            case .submit: self.submit(command.text)
+            case .submit: self.submit(command.text, dryRun: command.dryRun)
             case .revise: self.dispatch(command.text, asRevision: true)
             case .continueTask: self.resume()
             case .confirm: self.confirm()
@@ -455,7 +457,7 @@ final class VoiceControlCoordinator {
         guard let app else { return false }
         return await VoiceControlAppActivation.bringForward(app)
     }
-    private func submit(_ text: String) {
+    private func submit(_ text: String, dryRun: Bool = false) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, ensureSession() else { return }
         let command = text.lowercased().trimmingCharacters(in: .punctuationCharacters)
@@ -496,7 +498,7 @@ final class VoiceControlCoordinator {
         case "resume", "continue", "continue task": resume(); return
         default: break
         }
-        dispatch(text)
+        dispatch(text, dryRun: dryRun)
     }
     static func literalInstruction(_ text: String) -> String {
         text.lowercased().hasPrefix("type literally ") ? text : "type " + text
@@ -535,7 +537,7 @@ final class VoiceControlCoordinator {
             break
         }
     }
-    private func dispatch(_ text: String, asRevision: Bool = false, asLiteralPayload: Bool = false) {
+    private func dispatch(_ text: String, asRevision: Bool = false, asLiteralPayload: Bool = false, dryRun: Bool = false) {
         let submission = submissions.begin()
         let correction = !asLiteralPayload && (asRevision || (!model.goal.isEmpty && VoiceControlConversationState.isCorrection(text)))
         if !correction && model.conversation.expectedResponse != .clarification {
@@ -564,7 +566,7 @@ final class VoiceControlCoordinator {
             guard self.sessionGeneration == generation, self.acceptingEvents, self.submissions.accepts(submission) else { return }
             if clarification { await runner.clarify(text, submissionAuthority: submission) }
             else if correction { await runner.revise(text, submissionAuthority: submission) }
-            else { await runner.submit(text, submissionAuthority: submission) }
+            else { await runner.submit(text, submissionAuthority: submission, dryRun: dryRun) }
         }
     }
     private func stop() {

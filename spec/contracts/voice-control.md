@@ -35,6 +35,7 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   shallow static-text or image name; nameless groups are never candidates; the
   same role, label and frame is one control; node and time caps report
   `isComplete == false`. Display bounds and the window frame are read once per
+<<<<<<< HEAD
   observation. Values, settability, selection and fingerprints are read only for
   kept candidates.
 - Screen text is an optional second observation source (`ScreenTextReading`),
@@ -48,6 +49,13 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   while a suggestion or date picker is open and never appear in shareable
   diagnostics. No image is persisted or transmitted. Denied permission
   degrades silently to Accessibility-only observation.
+=======
+  observation; each node costs one batched attribute read. Values, settability,
+  selection and fingerprints are read only for kept candidates.
+  `VoiceControlSnapshot.metrics` records nodes visited, whether a cap cut the
+  walk, and the walk's milliseconds; the session log persists it per
+  observation and `latest.md` prints a `walk:` line.
+>>>>>>> origin/feat/voice-control-ax-walk
 - Labelled pressables the app exposes but does not show are offered as targets
   with `isOffscreen == true`, deduplicated against visible labels. They are
   reachable by `AXPress` and by an exact spoken name only: legality filtering
@@ -207,9 +215,23 @@ a shareable payload that keeps opaque ids and strips instruction and labels.
 `AppPaths.voiceControlLogsDir` (`latest.md`, `latest.json`, `events.jsonl` and
 `sessions/`). Debug app-state overrides keep that folder inside the throwaway
 root. `latest.md` is the wide event for the current turn. `latest.json` adds
-joinable per-step records and offered controls. `events.jsonl` streams the same
-step records plus one `type=turn` line when the turn stops. Field values and
+joinable per-step records, offered controls, replayable observations (snapshot
+id, context id, window text summary, targets without values) and every Jev
+request as `decisions[]`: per head, the chosen option, confidence and the full
+probability map keyed by opaque target ids, closed tokens or span indices.
+`latest.md` also carries a per-stage timing line (mean/max for observation,
+decision, dispatch, verification) and the last Jev request's top options per
+head. `events.jsonl` streams the same step records, one `type=decision` line per
+model request, plus one `type=turn` line when the turn stops. Field values and
 selected text stay out. End clears the panel and does not delete the log.
+
+`macparakeet-cli voice-control replay <session.json> [--goal …] [--observation N]
+[--history …] [--jev]` routes an instruction against a persisted observation
+through the same router and, with `--jev` and `JEV_API_KEY`, the same decision
+client. It never observes or acts on the live screen. The inbox accepts
+`"dryRun": true` on `submit`: the runner observes, routes and decides, records a
+`dispatch/dry_run` trace naming the consequence, reports "would <operation>
+<control>", and ends the task without executing or asking for confirmation.
 Retention is the last 20 sessions. A pointer copy is also written to
 `/tmp/macparakeet-voice-control/latest.md`. The experimental panel exposes the
 log path with Refresh, Open folder, Copy log path, and Copy diagnostics. Copy

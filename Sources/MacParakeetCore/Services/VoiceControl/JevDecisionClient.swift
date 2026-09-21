@@ -16,18 +16,43 @@ public enum JevDecisionError: Error, Sendable, LocalizedError {
 
 public actor JevDecisionClient: VoiceControlDecisionEngine {
     public static let model = "jev-1.13.0"
+    public typealias DecisionObserver = @Sendable (VoiceControlDecisionTrace) async -> Void
     private let apiKey: String
     private let transport: @Sendable (URLRequest) async throws -> (Data, URLResponse)
     private let consent: @Sendable () -> Bool
-    public init(apiKey: String, session: URLSession = .shared, consent: @escaping @Sendable () -> Bool) {
-        self.apiKey = apiKey; self.consent = consent
+    /// Receives every validated response as head-level probabilities. Keys are
+    /// opaque ids and closed tokens; the observer never sees labels or spans.
+    private let onDecision: DecisionObserver?
+    public init(
+        apiKey: String, session: URLSession = .shared, consent: @escaping @Sendable () -> Bool,
+        onDecision: DecisionObserver? = nil
+    ) {
+        self.apiKey = apiKey; self.consent = consent; self.onDecision = onDecision
         self.transport = { try await session.data(for: $0) }
     }
     public init(
         apiKey: String, consent: @escaping @Sendable () -> Bool,
-        transport: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse)
+        transport: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse),
+        onDecision: DecisionObserver? = nil
     ) {
-        self.apiKey = apiKey; self.consent = consent; self.transport = transport
+        self.apiKey = apiKey; self.consent = consent; self.transport = transport; self.onDecision = onDecision
+    }
+
+    private func observe(
+        kind: String, situation: String?, answers: [String: Answer], requestBytes: Int,
+        started: ContinuousClock.Instant, resolution: String
+    ) async {
+        guard let onDecision else { return }
+        let elapsed = started.duration(to: .now)
+        let heads = answers.mapValues {
+            VoiceControlDecisionTrace.Head(choice: $0.choice, confidence: $0.confidence, probabilities: $0.probabilities)
+        }
+        await onDecision(
+            VoiceControlDecisionTrace(
+                model: Self.model, kind: kind, situation: situation, heads: heads, requestBytes: requestBytes,
+                latencyMilliseconds: Int(elapsed.components.seconds) * 1000
+                    + Int(elapsed.components.attoseconds / 1_000_000_000_000_000),
+                resolution: resolution))
     }
 
     public func decide(goal: String, snapshot: VoiceControlSnapshot, history: [VoiceControlAction]) async throws
@@ -128,6 +153,7 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
         let encoded = try JSONEncoder().encode(body)
         guard encoded.count <= 120_000 else { throw JevDecisionError.contextTooLarge }
         request.httpBody = encoded
+        let started = ContinuousClock.now
         let data: Data
         let response: URLResponse
         do { (data, response) = try await transport(request) } catch is CancellationError {
@@ -148,7 +174,29 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
             guard let answer = decoded.answers[key] else { throw JevDecisionError.invalidResponse }
             try Self.validate(answer, offered: Set(question.criteria.keys))
         }
-        guard let operationAnswer = decoded.answers["operation"], operationAnswer.confidence >= 0.5 else {
+        let decision = Self.resolveUnconstrained(decoded.answers, values: values)
+        await observe(
+            kind: "unconstrained", situation: VoiceControlSituation.classify(snapshot).rawValue,
+            answers: decoded.answers, requestBytes: encoded.count, started: started,
+            resolution: Self.resolutionToken(decision))
+        return decision
+    }
+
+    static func resolutionToken(_ decision: VoiceControlDecision) -> String {
+        switch decision {
+        case .action: return "action"
+        case .clarify: return "clarify"
+        case .finished: return "finished"
+        case .directCompleted: return "direct"
+        case .information: return "information"
+        case .pick: return "pick"
+        }
+    }
+
+    private static func resolveUnconstrained(_ answers: [String: Answer], values: [String: String])
+        -> VoiceControlDecision
+    {
+        guard let operationAnswer = answers["operation"], operationAnswer.confidence >= 0.5 else {
             return .clarify("Please describe the next step more specifically.")
         }
         if operationAnswer.choice == "finished" { return .finished }
@@ -156,27 +204,27 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
             return .clarify("I need more detail about the next step or requested outcome. What should happen next?")
         }
         guard let operation = VoiceControlOperation(rawValue: operationAnswer.choice),
-            let target = decoded.answers["target_" + operation.rawValue], target.choice != "none",
+            let target = answers["target_" + operation.rawValue], target.choice != "none",
             target.confidence >= 0.5
         else {
             return .clarify("Which control should I use? Please say its full label.")
         }
         var value: String?
         if operation == .setValue || operation == .insertText {
-            guard let selected = decoded.answers["value_" + target.choice], selected.choice != "none",
+            guard let selected = answers["value_" + target.choice], selected.choice != "none",
                 selected.confidence >= 0.5,
                 let span = values[selected.choice]
             else { return .clarify("What exact text should I enter?") }
             value = span
         } else if operation == .scroll {
-            value = decoded.answers["direction"]?.choice
+            value = answers["direction"]?.choice
         } else if operation == .key {
-            guard let key = decoded.answers["key"], key.choice != "none", key.confidence >= 0.5 else {
+            guard let key = answers["key"], key.choice != "none", key.confidence >= 0.5 else {
                 return .clarify("Please use an explicit supported keyboard command.")
             }
             value = key.choice
         }
-        let assessment = decoded.answers["consequence"]
+        let assessment = answers["consequence"]
         let consequence = assessment.flatMap { $0.confidence >= 0.8 ? VoiceControlConsequence(rawValue: $0.choice) : nil } ?? .unknown
         return .action(VoiceControlAction(operation: operation, targetID: target.choice, value: value, consequence: consequence, modelID: Self.model, decisionConfidence: operationAnswer.confidence))
     }
@@ -210,6 +258,7 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
         let encoded = try JSONEncoder().encode(body)
         guard encoded.count <= 120_000 else { throw JevDecisionError.contextTooLarge }
         request.httpBody = encoded
+        let started = ContinuousClock.now
         let data: Data
         let response: URLResponse
         do { (data, response) = try await transport(request) } catch is CancellationError {
@@ -228,23 +277,28 @@ public actor JevDecisionClient: VoiceControlDecisionEngine {
         }
         guard let answer = decoded.answers["outcome"] else { throw JevDecisionError.invalidResponse }
         try Self.validate(answer, offered: Set(criteria.keys))
-        guard answer.confidence >= 0.5 else {
-            return .clarify("Please describe the next step more specifically.")
+        let decision: VoiceControlDecision
+        if answer.confidence < 0.5 {
+            decision = .clarify("Please describe the next step more specifically.")
+        } else if answer.choice == "clarify" || answer.choice == "insufficient_evidence" {
+            decision = .clarify("Which of the offered choices should I use?")
+        } else {
+            guard let event = events.first(where: { $0.id == answer.choice }) else {
+                throw JevDecisionError.invalidResponse
+            }
+            let action = event.action
+            decision = .action(
+                VoiceControlAction(
+                    operation: action.operation, targetID: action.targetID, value: action.value,
+                    targetLabel: action.targetLabel, requiresConfirmation: action.requiresConfirmation,
+                    receiptStatus: action.receiptStatus, consequence: action.consequence,
+                    modelID: Self.model, decisionConfidence: answer.confidence,
+                    postcondition: event.postcondition == .unknown ? action.postcondition : event.postcondition))
         }
-        if answer.choice == "clarify" || answer.choice == "insufficient_evidence" {
-            return .clarify("Which of the offered choices should I use?")
-        }
-        guard let event = events.first(where: { $0.id == answer.choice }) else {
-            throw JevDecisionError.invalidResponse
-        }
-        let action = event.action
-        return .action(
-            VoiceControlAction(
-                operation: action.operation, targetID: action.targetID, value: action.value,
-                targetLabel: action.targetLabel, requiresConfirmation: action.requiresConfirmation,
-                receiptStatus: action.receiptStatus, consequence: action.consequence,
-                modelID: Self.model, decisionConfidence: answer.confidence,
-                postcondition: event.postcondition == .unknown ? action.postcondition : event.postcondition))
+        await observe(
+            kind: "outcome", situation: situation.rawValue, answers: decoded.answers,
+            requestBytes: encoded.count, started: started, resolution: Self.resolutionToken(decision))
+        return decision
     }
 
     static func sourceSpans(_ text: String) -> [String] {

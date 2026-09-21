@@ -50,6 +50,16 @@ public struct VoiceControlTarget: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// How an observation was produced: what the walk cost and whether a cap cut it.
+public struct VoiceControlObservationMetrics: Codable, Sendable, Equatable {
+    public var nodesVisited: Int
+    public var capped: Bool
+    public var walkMilliseconds: Int
+    public init(nodesVisited: Int, capped: Bool, walkMilliseconds: Int) {
+        self.nodesVisited = nodesVisited; self.capped = capped; self.walkMilliseconds = walkMilliseconds
+    }
+}
+
 public struct VoiceControlSnapshot: Codable, Sendable, Equatable {
     public let id: UUID
     public let contextID: String
@@ -57,12 +67,14 @@ public struct VoiceControlSnapshot: Codable, Sendable, Equatable {
     public let targets: [VoiceControlTarget]
     public let summary: String
     public let isComplete: Bool
+    public let metrics: VoiceControlObservationMetrics?
     public init(
         id: UUID = UUID(), contextID: String, applicationName: String,
-        targets: [VoiceControlTarget], summary: String = "", isComplete: Bool = true
+        targets: [VoiceControlTarget], summary: String = "", isComplete: Bool = true,
+        metrics: VoiceControlObservationMetrics? = nil
     ) {
         self.id = id; self.contextID = contextID; self.applicationName = applicationName
-        self.targets = targets; self.summary = summary; self.isComplete = isComplete
+        self.targets = targets; self.summary = summary; self.isComplete = isComplete; self.metrics = metrics
     }
 }
 

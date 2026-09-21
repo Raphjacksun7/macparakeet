@@ -11,12 +11,36 @@ public struct VoiceControlPersistedTarget: Codable, Sendable, Equatable {
     public var hasValue: Bool
 }
 
+/// One observation as a replayable fixture. Field values and selected text
+/// are omitted; `summary` is the window title and visible static text the
+/// adapter already sends to Jev, kept so an offline replay sees the same state.
 public struct VoiceControlPersistedObservation: Codable, Sendable, Equatable {
     public var at: Date
     public var complete: Bool
     public var applicationName: String
     public var targetCount: Int
     public var targets: [VoiceControlPersistedTarget]
+    public var snapshotID: UUID?
+    public var contextID: String?
+    public var summary: String?
+    public var metrics: VoiceControlObservationMetrics?
+
+    /// Rebuild a snapshot the router and decision engine can run against.
+    /// Values are absent, so `value`-dependent local routes (`replace X with Y`,
+    /// skip-if-already-typed) behave as if the field were empty.
+    public func snapshot() -> VoiceControlSnapshot {
+        VoiceControlSnapshot(
+            id: snapshotID ?? UUID(), contextID: contextID ?? "replay:\(applicationName)",
+            applicationName: applicationName,
+            targets: targets.map { target in
+                VoiceControlTarget(
+                    id: target.id, label: target.label, role: target.role, value: target.hasValue ? "" : nil,
+                    operations: Set(target.operations.compactMap(VoiceControlOperation.init(rawValue:))),
+                    isNavigation: target.isNavigation, isFocused: target.isFocused,
+                    valueIsComplete: target.valueIsComplete)
+            },
+            summary: summary ?? "", isComplete: complete, metrics: metrics)
+    }
 }
 
 public struct VoiceControlPersistedSession: Codable, Sendable, Equatable {
@@ -31,6 +55,13 @@ public struct VoiceControlPersistedSession: Codable, Sendable, Equatable {
     public var summary: VoiceControlTurnSummary?
     public var observations: [VoiceControlPersistedObservation]
     public var records: [VoiceControlTraceRecord]
+    public var decisions: [VoiceControlDecisionTrace]?
+
+    public static func load(from url: URL) throws -> VoiceControlPersistedSession {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(VoiceControlPersistedSession.self, from: Data(contentsOf: url))
+    }
 }
 
 public actor VoiceControlTraceStore: VoiceControlTraceSink {
@@ -77,7 +108,7 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
         session = VoiceControlPersistedSession(
             schema: Self.schema, taskID: id, startedAt: now, updatedAt: now,
             instruction: Self.clip(instruction, 2_000), applicationName: nil,
-            phase: "started", status: nil, summary: nil, observations: [], records: [])
+            phase: "started", status: nil, summary: nil, observations: [], records: [], decisions: [])
         sessionURL = sessionsDirectory.appendingPathComponent(Self.sessionFileName(id: id, at: now))
         truncateEvents()
         persist()
@@ -111,12 +142,25 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
                     operations: target.operations.map(\.rawValue).sorted(),
                     isFocused: target.isFocused, isNavigation: target.isNavigation,
                     valueIsComplete: target.valueIsComplete, hasValue: target.value != nil)
-            })
+            },
+            snapshotID: snapshot.id, contextID: snapshot.contextID,
+            summary: Self.clip(snapshot.summary, 4_000), metrics: snapshot.metrics)
         session?.applicationName = snapshot.applicationName
         session?.observations.append(observation)
         if let count = session?.observations.count, count > 8 {
             session?.observations.removeFirst(count - 8)
         }
+        persist()
+    }
+
+    public func noteDecision(_ decision: VoiceControlDecisionTrace) async {
+        prepareIfNeeded()
+        guard session != nil else { return }
+        var decisions = session?.decisions ?? []
+        decisions.append(decision)
+        if decisions.count > 32 { decisions.removeFirst(decisions.count - 32) }
+        session?.decisions = decisions
+        appendEvent(decisionEvent(decision))
         persist()
     }
 
@@ -155,7 +199,12 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
         guard let data = try? Self.encoder.encode(session) else { return }
         if let sessionURL { try? data.write(to: sessionURL) }
         try? data.write(to: latestURL, options: .atomic)
-        let markdown = session.summary?.markdown(instruction: session.instruction, taskID: session.taskID)
+        var markdown = session.summary?.markdown(instruction: session.instruction, taskID: session.taskID)
+        if let metrics = session.observations.last?.metrics {
+            markdown = (markdown ?? "") + "walk: visited=\(metrics.nodesVisited) capped=\(metrics.capped) \(metrics.walkMilliseconds)ms\n"
+        }
+        let decisionLines = Self.decisionLines(session.decisions, observations: session.observations)
+        if !decisionLines.isEmpty { markdown = (markdown ?? "") + decisionLines.joined(separator: "\n") + "\n" }
         try? markdown?.data(using: .utf8)?.write(to: latestMarkdownURL, options: .atomic)
         publishPointer(data, markdown: markdown)
         pruneSessions()
@@ -226,6 +275,52 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
         if let complete = record.observationComplete { event["observation_complete"] = complete }
         if let modelID = record.modelID { event["model_id"] = modelID }
         return event
+    }
+
+    private func decisionEvent(_ decision: VoiceControlDecisionTrace) -> [String: Any] {
+        var heads: [String: Any] = [:]
+        for (name, head) in decision.heads {
+            heads[name] = [
+                "choice": head.choice,
+                "confidence": head.confidence,
+                "top": head.top(5).map { ["option": $0.option, "p": $0.probability] },
+            ]
+        }
+        var event: [String: Any] = [
+            "type": "decision",
+            "schema": Self.schema,
+            "task_id": session?.taskID.uuidString ?? "",
+            "ts": ISO8601DateFormatter().string(from: decision.at),
+            "model_id": decision.model,
+            "kind": decision.kind,
+            "resolution": decision.resolution,
+            "request_bytes": decision.requestBytes,
+            "latency_ms": decision.latencyMilliseconds,
+            "heads": heads,
+        ]
+        if let situation = decision.situation { event["situation"] = situation }
+        return event
+    }
+
+    /// Lines for `latest.md`: the last model request, one line per head with its
+    /// top options. Reads as "why did Jev pick that" without opening the JSON.
+    static func decisionLines(_ decisions: [VoiceControlDecisionTrace]?, observations: [VoiceControlPersistedObservation]) -> [String] {
+        guard let decision = decisions?.last else { return [] }
+        let labels = Dictionary(
+            observations.last?.targets.map { ($0.id, $0.label) } ?? [], uniquingKeysWith: { first, _ in first })
+        var lines = [
+            "jev: \(decision.kind) \(decision.resolution) \(decision.latencyMilliseconds)ms \(decision.requestBytes)B"
+                + (decision.situation.map { " situation=\($0)" } ?? "")
+        ]
+        for name in decision.heads.keys.sorted() {
+            guard let head = decision.heads[name] else { continue }
+            let options = head.top(3).map { option -> String in
+                let label = labels[option.option].map { " \"\(String($0.prefix(40)))\"" } ?? ""
+                return "\(option.option)\(label)=\(String(format: "%.2f", option.probability))"
+            }
+            lines.append("  \(name): \(head.choice) (\(String(format: "%.2f", head.confidence))) " + options.joined(separator: " "))
+        }
+        return lines
     }
 
     private func turnEvent(_ session: VoiceControlPersistedSession, summary: VoiceControlTurnSummary) -> [String: Any] {
@@ -300,10 +395,19 @@ public actor VoiceControlTraceStore: VoiceControlTraceSink {
           latest.json
 
         latest.md is the wide event for the current turn: outcome, why, actor,
-        route, last control, and decision counts. latest.json is the same summary
-        plus joinable per-step records and offered controls (id, role, label).
-        events.jsonl is the streaming form: one JSON object per step, plus one
+        route, last control, decision counts, per-stage timing, and the last
+        Jev request's top options per head. latest.json is the same summary
+        plus joinable per-step records, offered controls (id, role, label),
+        replayable observations (window text, no values), and every Jev
+        probability (`decisions`). events.jsonl is the streaming form: one JSON
+        object per step, one `type=decision` per model request, plus one
         `type=turn` line when the turn stops.
+
+        Replay an observation offline without touching the screen:
+          macparakeet-cli voice-control replay latest.json --goal "..."
+
+        Dry run through the inbox (observe, route, decide, execute nothing):
+          command.json  {"action":"submit","text":"...","dryRun":true}
 
         The log does not include API keys, audio, screenshots, selected text,
         field values or remote Jev bodies.

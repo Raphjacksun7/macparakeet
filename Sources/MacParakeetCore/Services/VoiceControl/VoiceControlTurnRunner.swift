@@ -22,6 +22,7 @@ public actor VoiceControlTurnRunner {
     private var expiryTask: Task<Void, Never>?
     private var running = false
     private var cancelled = false
+    private var dryRun = false
     private var submissionID = UUID()
     private var stoppedWaiters: [CheckedContinuation<Void, Never>] = []
     private var requests = 0
@@ -91,13 +92,16 @@ public actor VoiceControlTurnRunner {
         cancel()
         if running { await withCheckedContinuation { stoppedWaiters.append($0) } }
     }
-    public func submit(_ goal: String, submissionAuthority: ActionAuthority? = nil) async {
+    /// `dryRun` observes, routes and decides, then reports the compiled action
+    /// instead of executing it. The task ends after that report.
+    public func submit(_ goal: String, submissionAuthority: ActionAuthority? = nil, dryRun: Bool = false) async {
         guard submissionAuthority?.isValid != false else { return }
         stop()
         let id = UUID(); submissionID = id
         if running { await withCheckedContinuation { stoppedWaiters.append($0) } }
         guard submissionID == id, submissionAuthority?.isValid != false else { return }
         ingressAuthority = submissionAuthority
+        self.dryRun = dryRun
         self.goal = goal; amendments = []; history = []; pending = nil; cancelled = false
         expiryTask?.cancel(); requests = 0; dispatched = 0; activeSeconds = 0
         dispatchedStates = []; uncertainEffects = []; manualOverrides = [:]; manualContextMismatch = false; revisionSupersedesManualValues = false
@@ -516,6 +520,14 @@ public actor VoiceControlTurnRunner {
                     }
                     guard !isRepeated(bound, snapshot: snapshot) else { return }
                     let consequence = VoiceControlConsequencePolicy.consequence(of: bound, target: target)
+                    if dryRun {
+                        record(
+                            "dispatch", operation: bound.operation, outcome: "dry_run",
+                            observation: snapshot, action: bound, detail: consequence.rawValue)
+                        let gate = bound.requiresConfirmation || consequence != .ordinary ? " (would confirm: \(consequence.rawValue))" : ""
+                        continuation.yield(.completed("Dry run: would \(bound.operation.rawValue) \(target.label)\(gate). Nothing was executed."))
+                        return
+                    }
                     if bound.requiresConfirmation || consequence != .ordinary {
                         offerConfirmation(bound, target: target, snapshot: snapshot, authority: authority, consequence: consequence); return
                     }
