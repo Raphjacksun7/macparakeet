@@ -199,6 +199,8 @@ Independent of the comparison, findings from reading the pushed head:
 
 ## 6. Adoption plan, sized
 
+**Status 2026-09-21:** all eight items merged — 1–2 in #1107, 3–4 in #1108, 5–7 in #1109, 8 in #1110 (opt-in second source); region hints (3.3) in #1112; picker-chrome fix in #1111. Live and corpus measurements are recorded in the plan (`plans/active/2026-09-20-voice-control-observability-perception-decision.md`) and in `docs/research/2026-09-19-jev-voice-control/evidence.md`.
+
 Ordered by value over cost. Each item is independent; none requires the others, and none changes the enabled-events doctrine.
 
 | # | Item | Size | Where | Verifies |
