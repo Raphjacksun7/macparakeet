@@ -91,8 +91,8 @@ public struct AXWalkResult<Node: Hashable> {
 ///    image) takes its parent control's label and is then not emitted twice; a
 ///    row, cell or button takes the first shallow static text or image name.
 /// 6. Nameless groups are layout boxes, never candidates, even when pressable.
-/// 7. The same role, label and frame is the same control however many objects
-///    the bridge hands over for it.
+/// 7. The same role, name and frame is the same control however many objects
+///    the bridge hands over for it. Nameless nodes are never de-duplicated.
 /// 8. Node and time caps stop the walk and say so.
 private struct WalkFrame<Node: Hashable> {
     let node: Node
@@ -227,9 +227,14 @@ public enum AXTreeWalk {
         return true
     }
 
+    /// Identity for de-duplication. Only a *named* node with a real frame has one:
+    /// nameless containers (web layouts nest same-sized `AXGroup`s many levels
+    /// deep) must never collapse into each other, or the second one's subtree is
+    /// lost.
     static func subtreeKey(_ facts: AXWalkFacts) -> String? {
         guard let frame = facts.frame, frame.width > 0, frame.height > 0 else { return nil }
         let name = facts.label.isEmpty ? (facts.text ?? "") : facts.label
+        guard !name.isEmpty else { return nil }
         return
             "\(facts.role)|\(name)|\(Int(frame.minX.rounded()))|\(Int(frame.minY.rounded()))|\(Int(frame.width.rounded()))|\(Int(frame.height.rounded()))"
     }
