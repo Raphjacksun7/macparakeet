@@ -83,7 +83,7 @@ public enum VoiceControlLegality {
     }
 
     public static func offeredTargets(in snapshot: VoiceControlSnapshot) -> [VoiceControlTarget] {
-        let page = snapshot.targets.filter { !$0.operations.contains(.activateApp) && $0.role != "url" }
+        let page = snapshot.targets.filter { !$0.operations.contains(.activateApp) && $0.role != "url" && !$0.isOffscreen }
         switch VoiceControlSituation.classify(snapshot) {
         case .plain:
             return page

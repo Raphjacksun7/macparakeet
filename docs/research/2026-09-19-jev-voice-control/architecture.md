@@ -61,6 +61,7 @@ A stale throw is not a dispatched duplicate. Consume a decision once, before mut
 
 | Type | Job |
 |---|---|
+| `AXTreeWalk` / `AXTreeSource` | Pure pruning over an injected tree; fake-tree tests; off-screen pressables kept separately |
 | `VoiceControlSituation` | Recomputed from AX facts |
 | `VoiceControlEnabledEvent` | One legal action plus criteria |
 | `VoiceControlLocalTools` | Compile unique names, keys, skip-if-typed |
