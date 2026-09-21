@@ -32,6 +32,6 @@ Closed-set commands may commit early; free-text payloads wait for a final transc
 
 **Flagship, after that:** play a YouTube result; Maps directions; Google Flights through to results; two clauses in one breath.
 
-**Later:** named references, structural text editing, spoken rewrites through Transforms, TTS, cross-app send flows, OCR recovery.
+**Later:** named references, structural text editing, spoken rewrites through Transforms, TTS, cross-app send flows. On-device screen text now ships as an opt-in second observation source; tile-level re-OCR and ScreenCaptureKit remain later.
 
 The everyday catalog is in [everyday-use-cases.md](everyday-use-cases.md). The route catalog is in [routing-catalog.md](routing-catalog.md).

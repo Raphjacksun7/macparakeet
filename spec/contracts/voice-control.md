@@ -40,6 +40,17 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   `VoiceControlSnapshot.metrics` records nodes visited, whether a cap cut the
   walk, and the walk's milliseconds; the session log persists it per
   observation and `latest.md` prints a `walk:` line.
+- Screen text is an optional second observation source (`ScreenTextReading`),
+  enabled per user (`voiceControl.screenText.v1`) because it needs Screen
+  Recording. Recognised lines that no Accessibility control explains, that lie
+  outside secure fields' frames and that contain no secure word become
+  `role: "text"` press targets with a private pixel centre; a press posts a
+  marked click and is received as `unknown` unless transition evidence
+  changes. The same lines join the snapshot `summary` under `Screen text:`
+  within the existing 4,000-character cap. Text targets are never offered
+  while a suggestion or date picker is open and never appear in shareable
+  diagnostics. No image is persisted or transmitted. Denied permission
+  degrades silently to Accessibility-only observation.
 - Labelled pressables the app exposes but does not show are offered as targets
   with `isOffscreen == true`, deduplicated against visible labels. They are
   reachable by `AXPress` and by an exact spoken name only: legality filtering

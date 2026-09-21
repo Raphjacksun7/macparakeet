@@ -23,10 +23,24 @@ public enum NativeVoiceControlError: Error, LocalizedError, Sendable, Equatable 
 public actor NativeVoiceControlAdapter: VoiceControlAdapter {
     private struct Element: @unchecked Sendable { let value: AXUIElement }
     private struct BoundTarget {
-        let element: Element
+        /// `nil` for a text-only target recognised from pixels; it is pressed by a click.
+        let element: Element?
         let target: VoiceControlTarget
         let fingerprint: String
+        let frame: CGRect?
+        let pixelPoint: CGPoint?
+        init(
+            element: Element?, target: VoiceControlTarget, fingerprint: String, frame: CGRect? = nil,
+            pixelPoint: CGPoint? = nil
+        ) {
+            self.element = element; self.target = target; self.fingerprint = fingerprint
+            self.frame = frame; self.pixelPoint = pixelPoint
+        }
     }
+    private let screenText: (any ScreenTextReading)?
+    /// Counts from the last `observe()`, for tests and logging. Never carries text.
+    public private(set) var lastObservationStats: (axCandidates: Int, screenTextBlocks: Int, screenTextTargets: Int) =
+        (0, 0, 0)
     private var handles: [String: BoundTarget] = [:]
     private var applications: [String: Int32] = [:]
     private var current: VoiceControlSnapshot?
@@ -46,11 +60,13 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         excludedBundleIDs: Set<String> = [
             "com.apple.keychainaccess", "com.1password.1password", "com.agilebits.onepassword7",
             "com.bitwarden.desktop", "com.apple.Passwords",
-        ], maxNodes: Int = 1_200, includeMenus: Bool = true, includeApplications: Bool = true
+        ], maxNodes: Int = 1_200, includeMenus: Bool = true, includeApplications: Bool = true,
+        screenText: (any ScreenTextReading)? = nil
     ) {
         self.excludedBundleIDs = excludedBundleIDs
         self.walkCaps = AXWalkCaps(maxNodes: min(2_000, max(1, maxNodes)))
         self.includeMenus = includeMenus; self.includeApplications = includeApplications
+        self.screenText = screenText
     }
 
     public func observe() async throws -> VoiceControlSnapshot {
@@ -98,6 +114,12 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         // Display and window geometry are read once per observation, not per node.
         let display = Self.activeDisplayBounds()
         let windowFrame = Self.frame(root)
+        // Screen text is read on its own actor while the walk runs here, under
+        // its own budget: a slow OCR pass never eats the Accessibility budget.
+        let screenTextTask: Task<[ScreenTextBlock], Never>? = {
+            guard let screenText, let windowFrame else { return nil }
+            return Task { await screenText.read(window: windowFrame) }
+        }()
         let walkStarted = ContinuousClock.now
         let walk = AXTreeWalk.run(
             roots: roots, source: LiveAXTreeSource(), display: display, window: windowFrame,
@@ -106,10 +128,14 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         var complete = walk.complete
         let text = walk.staticText
         var pending: [(target: VoiceControlTarget, bound: BoundTarget, inWeb: Bool)] = []
+        var secureFrames: [CGRect] = []
         for entry in walk.candidates {
             let node = entry.node.element
             let role = entry.facts.role
-            guard !Self.isSecure(node, role: role) else { continue }
+            guard !Self.isSecure(node, role: role) else {
+                if let frame = entry.facts.frame { secureFrames.append(frame) }
+                continue
+            }
             var label = entry.facts.label
             let readableValue = Self.attribute(node, kAXValueAttribute)
             let value = (readableValue as? String) ?? (readableValue as? NSNumber)?.stringValue ?? ""
@@ -137,8 +163,40 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 selectedText: AXTreeWalk.textRoles.contains(role) ? Self.completeSelection(node) : nil,
                 valueIsComplete: value.count <= 500)
             pending.append(
-                (target, BoundTarget(element: Element(value: node), target: target, fingerprint: Self.fingerprint(node)), inWeb))
+                (target,
+                 BoundTarget(
+                    element: Element(value: node), target: target, fingerprint: Self.fingerprint(node),
+                    frame: entry.facts.frame), inWeb))
         }
+        let axCandidates = pending.count
+        // Screen text: words the AX tree never named, read locally from pixels.
+        var textSummary: [String] = []
+        var screenTextBlocks = 0
+        var screenTextTargets = 0
+        if let screenTextTask {
+            let blocks = await Self.awaiting(screenTextTask, budget: Self.screenTextBudget) ?? []
+            try Task.checkCancellation()
+            screenTextBlocks = blocks.count
+            let controls = pending.compactMap { item -> (label: String, frame: CGRect)? in
+                guard let frame = item.bound.frame else { return nil }
+                return (item.target.label, frame)
+            }
+            let result = Self.textTargets(
+                from: blocks, controls: controls,
+                excludedFrames: secureFrames + Self.ownWindowFrames(), existingText: text)
+            // Text targets follow the page: in a browser with web content they are web content.
+            let textInWeb = isBrowser && pending.contains { $0.inWeb }
+            for (target, block) in zip(result.targets, result.blocks) {
+                pending.append(
+                    (target,
+                     BoundTarget(
+                        element: nil, target: target, fingerprint: "text|" + target.label, frame: block.frame,
+                        pixelPoint: CGPoint(x: block.frame.midX, y: block.frame.midY)), textInWeb))
+            }
+            screenTextTargets = result.targets.count
+            textSummary = result.summaryLines
+        }
+        lastObservationStats = (axCandidates, screenTextBlocks, screenTextTargets)
         // Off-screen pressables: reachable by AXPress, addressable only by exact name.
         // A label the visible list already carries is dropped: the on-screen
         // control is the better way to reach it, and one label must not split.
@@ -171,7 +229,8 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 valueIsComplete: item.target.valueIsComplete, consequence: item.target.consequence,
                 isOffscreen: item.target.isOffscreen)
             handles[id] = BoundTarget(
-                element: item.bound.element, target: target, fingerprint: item.bound.fingerprint)
+                element: item.bound.element, target: target, fingerprint: item.bound.fingerprint,
+                frame: item.bound.frame, pixelPoint: item.bound.pixelPoint)
             targets.append(target)
         }
         var seenApps = Set<String>()
@@ -209,9 +268,10 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         }
         let title = Self.string(root, kAXTitleAttribute)
         let contextID = "ax:\(pid):\(CFHash(root))"
+        let summaryLines = [title] + text + (textSummary.isEmpty ? [] : ["Screen text:"] + textSummary)
         let snapshot = VoiceControlSnapshot(
             id: snapshotID, contextID: contextID, applicationName: name,
-            targets: targets, summary: String(([title] + text).joined(separator: "\n").prefix(4000)),
+            targets: targets, summary: String(summaryLines.joined(separator: "\n").prefix(4000)),
             isComplete: complete,
             metrics: VoiceControlObservationMetrics(
                 nodesVisited: walk.visited, capped: !walk.complete,
@@ -265,7 +325,11 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         guard let bound = handles[action.targetID], bound.target.operations.contains(action.operation) else {
             throw NativeVoiceControlError.unsupported
         }
-        let node = bound.element.value
+        guard let element = bound.element else {
+            return try await clickScreenText(bound: bound, action: action, authority: authority,
+                                             expectedPID: expectedPID, expectedWindow: expectedWindow)
+        }
+        let node = element.value
         // An off-screen control is pressed by identity; there is no pixel to check.
         guard bound.target.isOffscreen || Self.isVisible(node, within: expectedWindow.value),
             Self.fingerprint(node) == bound.fingerprint, !Self.isSecure(node, role: bound.target.role)
@@ -481,6 +545,69 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         }
     }
 
+    /// A text-only target has no AX node: it is pressed with a marked click at the
+    /// recognised word's centre. There is no readback, so the receipt is at most a transition.
+    private func clickScreenText(
+        bound: BoundTarget, action: VoiceControlAction, authority: ActionAuthority,
+        expectedPID: Int32, expectedWindow: Element
+    ) async throws -> VoiceControlReceipt {
+        guard action.operation == .press, let point = bound.pixelPoint else { throw NativeVoiceControlError.unsupported }
+        guard bound.fingerprint == "text|" + bound.target.label else { throw NativeVoiceControlError.targetChanged }
+        current = nil
+        let beforeTransition = transitionEvidence()
+        try validateContext()
+        try await validateForeground(expectedPID: expectedPID, expectedWindow: expectedWindow)
+        try authority.perform {
+            guard AXIsProcessTrusted() else { throw NativeVoiceControlError.permission }
+            let source = CGEventSource(stateID: .hidSystemState)
+            let types: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp]
+            for type in types {
+                guard let event = CGEvent(
+                    mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+                else { throw NativeVoiceControlError.unsupported }
+                StreamingCursorEventMarker.mark(event)
+                event.post(tap: .cghidEventTap)
+            }
+        }
+        for _ in 0..<3 {
+            try await Task.sleep(for: .milliseconds(120))
+            try authority.check()
+            let afterTransition = transitionEvidence()
+            if afterTransition != beforeTransition, !afterTransition.isEmpty {
+                return VoiceControlReceipt(
+                    status: .transitionObserved,
+                    message: "The interface changed after the click; checking the next step.")
+            }
+        }
+        return VoiceControlReceipt(status: .unknown, message: "Clicked on-screen text. Check the result before continuing.")
+    }
+
+    /// The pure part of the screen-text pass: merge OCR lines, drop what an AX
+    /// control or a secure field already explains, order, cap, and shape targets
+    /// plus summary lines. `blocks` is aligned with `targets`.
+    static func textTargets(
+        from blocks: [ScreenTextBlock], controls: [(label: String, frame: CGRect)], excludedFrames: [CGRect],
+        existingText: [String]
+    ) -> (targets: [VoiceControlTarget], blocks: [ScreenTextBlock], summaryLines: [String]) {
+        let merged = ScreenTextMerge.mergeLines(blocks)
+        let unexplained = ScreenTextMerge.readingOrder(
+            ScreenTextMerge.unexplained(merged, controls: controls, excludedFrames: excludedFrames))
+        var seen = Set(existingText.map(ScreenTextMerge.normalize))
+        var summary: [String] = []
+        var targets: [VoiceControlTarget] = []
+        var kept: [ScreenTextBlock] = []
+        for block in unexplained {
+            if seen.insert(ScreenTextMerge.normalize(block.text)).inserted { summary.append(block.text) }
+            guard targets.count < 80 else { continue }
+            targets.append(
+                VoiceControlTarget(
+                    id: "pending", label: String(block.text.prefix(240)), role: "text", operations: [.press],
+                    isNavigation: false))
+            kept.append(block)
+        }
+        return (targets, kept, summary)
+    }
+
     private func verifyTextValue(_ node: AXUIElement, expected: String, authority: ActionAuthority) async -> Bool {
         for attempt in 0..<6 {
             guard authority.isValid, !Task.isCancelled else { return false }
@@ -562,6 +689,34 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         "tab": 48, "escape": 53, "enter": 36, "return": 36,
         "left": 123, "right": 124, "down": 125, "up": 126, "backspace": 51, "delete": 117,
     ]
+    static let screenTextBudget: Duration = .milliseconds(1_200)
+    /// The task's value if it finishes within `budget`, else nil. The task keeps
+    /// running so its result is cached for the next observation.
+    static func awaiting<T: Sendable>(_ task: Task<T, Never>, budget: Duration) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await task.value }
+            group.addTask { try? await Task.sleep(for: budget); return nil }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Frames of this process's own on-screen windows (the Voice Control panel,
+    /// the menu bar extra's popover). Text drawn there — the user's instruction,
+    /// our status lines — is never the app's screen text.
+    static func ownWindowFrames() -> [CGRect] {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.compactMap { window in
+            guard window[kCGWindowOwnerPID as String] as? Int32 == pid,
+                let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let x = bounds["X"], let y = bounds["Y"], let w = bounds["Width"], let h = bounds["Height"], w > 0, h > 0
+            else { return nil }
+            return CGRect(x: x, y: y, width: w, height: h)
+        }
+    }
+
     /// Union of the active displays, read once per observation.
     static func activeDisplayBounds() -> CGRect {
         var displays = [CGDirectDisplayID](repeating: 0, count: 32)

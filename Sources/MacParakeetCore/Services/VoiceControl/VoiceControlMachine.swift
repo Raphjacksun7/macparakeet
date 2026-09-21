@@ -7,17 +7,19 @@ public enum VoiceControlSituation: String, Sendable, Equatable {
     case datePicker
 
     public static func classify(_ snapshot: VoiceControlSnapshot) -> VoiceControlSituation {
-        if snapshot.targets.contains(where: VoiceControlLegality.isCalendarDay) { return .datePicker }
+        // Screen-text targets are pixels, not AX rows; they never open a picker.
+        let targets = snapshot.targets.filter { $0.role != "text" }
+        if targets.contains(where: VoiceControlLegality.isCalendarDay) { return .datePicker }
         // A picker is an overlay, and an overlay announces itself through its
         // chrome ("Where else?" is the field only the open overlay shows; the
         // form's own "Where from?" / "Where to?" are not chrome). A focused row
         // whose label merely contains a comma is not evidence: a Gmail subject
         // line or a Finder path row does that too. Without chrome the surface is plain.
-        let overlayChrome = snapshot.targets.contains { $0.label.localizedStandardContains("Where else") }
+        let overlayChrome = targets.contains { $0.label.localizedStandardContains("Where else") }
         guard overlayChrome else { return .plain }
-        let cities = snapshot.targets.filter(VoiceControlLegality.isCitySuggestion)
-        if cities.contains(where: \.isFocused) || !cities.isEmpty { return .suggestionPicker }
-        let focusedChoice = snapshot.targets.contains {
+        let cities = targets.filter(VoiceControlLegality.isCitySuggestion)
+        if !cities.isEmpty { return .suggestionPicker }
+        let focusedChoice = targets.contains {
             $0.isFocused && $0.operations.contains(.press) && $0.role == "AXStaticText"
         }
         return focusedChoice ? .suggestionPicker : .plain
@@ -91,13 +93,15 @@ public enum VoiceControlLegality {
             return page
         case .suggestionPicker:
             return page.filter {
-                isCitySuggestion($0) || isOverlayChrome($0)
-                    || ($0.isFocused && $0.operations.contains(.key))
+                $0.role != "text"
+                    && (isCitySuggestion($0) || isOverlayChrome($0)
+                        || ($0.isFocused && $0.operations.contains(.key)))
             }
         case .datePicker:
             return page.filter {
-                isCalendarDay($0) || isOverlayChrome($0)
-                    || ($0.isFocused && $0.operations.contains(.key))
+                $0.role != "text"
+                    && (isCalendarDay($0) || isOverlayChrome($0)
+                        || ($0.isFocused && $0.operations.contains(.key)))
             }
         }
     }

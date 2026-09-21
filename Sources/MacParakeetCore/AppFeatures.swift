@@ -20,6 +20,9 @@ public enum AppFeatures {
     /// Experimental native Voice Control. Disabled in stable releases until
     /// live qualification and release review justify a deliberate flag change.
     public static let voiceControlEnabled = false
+    /// Per-user opt-in for reading the frontmost window's pixels with Vision OCR
+    /// as a second Voice Control observation source. Needs Screen Recording.
+    public static let voiceControlScreenTextDefaultsKey = "voiceControl.screenText.v1"
     public static func isVoiceControlAvailable(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
         #if DEBUG
         voiceControlEnabled || arguments.contains("--enable-voice-control")

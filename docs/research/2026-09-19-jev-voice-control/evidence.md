@@ -55,3 +55,17 @@ Local logs may include the instruction and control labels. Copy diagnostics stri
 ## Earlier text-only Jev probes
 
 Five synthetic Choice calls (Save / scroll / incomplete / negated / ambiguous) took 216–293 ms, median 238 ms. Text-only, tiny, no speech or Accessibility. Not a p95 voice-to-action claim.
+
+## Live observation numbers — 2026-09-20 (dev build, all four design PRs)
+
+Frontmost app, dry-run submit via the inbox, one observation each. Screen text on unless noted.
+
+| App | Accessibility controls | complete | observe |
+| --- | --- | --- | --- |
+| Google Chrome (Gmail search) | 158 | yes | 844 ms |
+| Notes | 87 | yes | 620 ms |
+| Finder (list view), AX only | 41 | no | 2.1 s (cap) |
+
+Screen text on Chrome left 14 unexplained blocks after Accessibility explained the rest; Notes 12; Finder 80 (file names, columns, dates). Fixed along the way: nameless-container de-duplication had pruned web subtrees (5 → 158 controls); the panel's own text had become targets; a Gmail row with a comma had classified the page as a city picker. Finder remains over budget on Accessibility alone; per-node reads are now one batched IPC and the `walk:` line in `latest.md` reports nodes visited so the next measurement is attributable.
+
+Replay corpus for the open-ended request shape: 12 observations × 4 goals, live Jev — `contextTooLarge` 8 → 0, heads max 26 → 5, max payload 47 KB → 33 KB, median latency unchanged (~297 ms). Decision quality needs a known-target corpus; not yet measured.

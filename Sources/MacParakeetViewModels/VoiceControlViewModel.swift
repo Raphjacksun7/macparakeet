@@ -60,6 +60,9 @@ public final class VoiceControlViewModel {
     public var keyInput = ""
     public var consent = false
     public var writingConsent = false
+    /// Opt-in Vision OCR of the frontmost window; stays on this Mac, needs Screen Recording.
+    public var screenText = UserDefaults.standard.bool(forKey: AppFeatures.voiceControlScreenTextDefaultsKey)
+    public var onScreenTextChanged: ((Bool) -> Void)?
     public var holdTrigger = HotkeyTrigger.chord(modifiers: ["control", "option"], keyCode: 49)
     public var onShortcutRecording: ((Bool) -> Void)?
     public var validateShortcut: ((HotkeyTrigger) -> HotkeyTrigger.ValidationResult)?
