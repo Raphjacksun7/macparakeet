@@ -171,6 +171,22 @@ private extension CLISpecCommand {
             output: "CLISpec object."
         ),
         CLISpecCommand(
+            ["voice-control", "replay"],
+            summary:
+                "Experimental: route an instruction against a saved Voice Control observation offline; executes nothing.",
+            arguments: [
+                .argument("session", required: true, summary: "Path to latest.json or sessions/*.json.")
+            ],
+            options: [
+                CLISpecParameter.option("--goal", valueName: "TEXT", summary: "Instruction to route; defaults to the recorded one."),
+                CLISpecParameter.option("--observation", valueName: "N", summary: "0-based observation index; defaults to the last."),
+                CLISpecParameter.option(
+                    "--history", valueName: "LIST", summary: "Comma-separated op:targetID[:receipt] executed history."),
+                CLISpecParameter.flag("--jev", summary: "Call Jev on router fall-through; requires JEV_API_KEY."),
+            ],
+            output: "VoiceControlReplayReport object: decision, jevRequest, jevDecision."
+        ),
+        CLISpecCommand(
             ["health"],
             summary:
                 "Check database, speech stack, helper binaries, and local runtime readiness; repair flags mutate local caches.",
