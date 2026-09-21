@@ -18,7 +18,7 @@ A live turn opened Flights, filled Zurich and London, committed the Zürich sugg
 
 The last snapshot was the origin autocomplete overlay (focused Zürich, plus ZRH, Zürich HB, Lake Zurich, Illinois). Policy outcome: `duplicate_blocked` on a key, not a city press. After cities and date were filled, the origin overlay returned. `Where else?` was still in the tree, so the plan treated the form as visible and sent Return on the focused suggestion. Repeating Escape then hit duplicate-effect protection.
 
-A second stall class: airport names on a **results** list were classified as a city overlay, which hid Search. Classification now requires a focused suggestion or `Where else?` chrome.
+A second stall class: airport names on a **results** list were classified as a city overlay, which hid Search. Classification now requires the `Where else?` overlay chrome; a focused row whose label merely contains a comma (seen live on a Gmail search page) stays `.plain`.
 
 Fixture tests make those stalls illegal. **ZRH→LON results have not been demonstrated.**
 

@@ -33,7 +33,7 @@ Execute one compiled landing, re-observe, offer a new independent Choice. The gr
 
 `VoiceControlSituation` is recomputed every snapshot from Accessibility facts: `plain`, `suggestionPicker`, or `datePicker`. Code lists **legal events**. Unique events skip the model. Several become one `outcome` Choice plus `insufficient_evidence` / `clarify`. Zero (no domain machine) is unconstrained Jev on legality-filtered page controls.
 
-Return is not a landing. Escape dismisses an overlay. Return and Search are not enabled while a suggestion or date picker is open. Overlay detection requires a focused suggestion or `Where else?` chrome — airport names on a results list are the form, not a picker.
+Return is not a landing. Escape dismisses an overlay. Return and Search are not enabled while a suggestion or date picker is open. Overlay detection requires the `Where else?` chrome that only the open overlay shows — a focused row with a comma in its label (a Gmail subject, a Finder path) is not a picker, and airport names on a results list are the form, not a picker.
 
 Jev never receives `role=url` destinations. Code owns allowlisted sites.
 
