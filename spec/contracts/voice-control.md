@@ -27,6 +27,21 @@ the [research plan](../../plans/active/2026-09-19-jev-voice-control.md).
   and budget policy, and consumes execution receipts.
 - `NativeVoiceControlAdapter` observes macOS Accessibility controls and executes
   the supported typed operations in the current app, including existing browsers.
+  Observation runs `AXTreeWalk`, a pure depth-first walk over an `AXTreeSource`,
+  so its pruning rules are unit-tested against fake trees: hidden subtrees end;
+  closed menu bar items are not descended; a real frame wholly off the display
+  ends visibility for its subtree; slivers under 4 pt are not visible; a bare
+  child borrows its parent control's label once; rows, cells and buttons take a
+  shallow static-text or image name; nameless groups are never candidates; the
+  same role, label and frame is one control; node and time caps report
+  `isComplete == false`. Display bounds and the window frame are read once per
+  observation. Values, settability, selection and fingerprints are read only for
+  kept candidates.
+- Labelled pressables the app exposes but does not show are offered as targets
+  with `isOffscreen == true`, deduplicated against visible labels. They are
+  reachable by `AXPress` and by an exact spoken name only: legality filtering
+  removes them from every Jev request, and a press on one is received as
+  `unknown` unless transition evidence changes.
 - `GUIMutationArbiter` coordinates foreground effects with dictation, Transforms
   and menu/history paste.
 

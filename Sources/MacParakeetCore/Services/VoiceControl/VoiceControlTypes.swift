@@ -16,14 +16,37 @@ public struct VoiceControlTarget: Codable, Sendable, Equatable, Identifiable {
     public let selectedText: String?
     public let valueIsComplete: Bool
     public let consequence: VoiceControlConsequence?
+    /// The app exposes this pressable control but does not show it (scrolled out,
+    /// parked off the display, an auto-hidden Dock). Reachable by `AXPress` and by
+    /// an exact spoken name only; never offered to the model.
+    public let isOffscreen: Bool
     public init(
         id: String, label: String, role: String, value: String? = nil,
         operations: Set<VoiceControlOperation>, isNavigation: Bool = false,
-        isFocused: Bool = false, selectedText: String? = nil, valueIsComplete: Bool = true, consequence: VoiceControlConsequence? = nil
+        isFocused: Bool = false, selectedText: String? = nil, valueIsComplete: Bool = true,
+        consequence: VoiceControlConsequence? = nil, isOffscreen: Bool = false
     ) {
         self.id = id; self.label = label; self.role = role; self.value = value
         self.operations = operations; self.isNavigation = isNavigation
-        self.isFocused = isFocused; self.selectedText = selectedText; self.valueIsComplete = valueIsComplete; self.consequence = consequence
+        self.isFocused = isFocused; self.selectedText = selectedText; self.valueIsComplete = valueIsComplete
+        self.consequence = consequence; self.isOffscreen = isOffscreen
+    }
+    private enum CodingKeys: String, CodingKey {
+        case id, label, role, value, operations, isNavigation, isFocused, selectedText, valueIsComplete, consequence, isOffscreen
+    }
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        role = try container.decode(String.self, forKey: .role)
+        value = try container.decodeIfPresent(String.self, forKey: .value)
+        operations = try container.decode(Set<VoiceControlOperation>.self, forKey: .operations)
+        isNavigation = try container.decode(Bool.self, forKey: .isNavigation)
+        isFocused = try container.decode(Bool.self, forKey: .isFocused)
+        selectedText = try container.decodeIfPresent(String.self, forKey: .selectedText)
+        valueIsComplete = try container.decode(Bool.self, forKey: .valueIsComplete)
+        consequence = try container.decodeIfPresent(VoiceControlConsequence.self, forKey: .consequence)
+        isOffscreen = try container.decodeIfPresent(Bool.self, forKey: .isOffscreen) ?? false
     }
 }
 

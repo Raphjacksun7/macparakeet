@@ -36,7 +36,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
     private var undoEdit: (element: Element, window: Element, before: String, after: String, pid: Int32, time: Date)?
     private var undoTargetID: String?
     private let excludedBundleIDs: Set<String>
-    private let maxNodes: Int
+    private let walkCaps: AXWalkCaps
     private let includeMenus: Bool
     private let includeApplications: Bool
     /// Chromium rebuilds its AX tree when these flags are first set. Ask once per process.
@@ -46,10 +46,10 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         excludedBundleIDs: Set<String> = [
             "com.apple.keychainaccess", "com.1password.1password", "com.agilebits.onepassword7",
             "com.bitwarden.desktop", "com.apple.Passwords",
-        ], maxNodes: Int = 600, includeMenus: Bool = true, includeApplications: Bool = true
+        ], maxNodes: Int = 1_200, includeMenus: Bool = true, includeApplications: Bool = true
     ) {
         self.excludedBundleIDs = excludedBundleIDs
-        self.maxNodes = min(800, max(1, maxNodes))
+        self.walkCaps = AXWalkCaps(maxNodes: min(2_000, max(1, maxNodes)))
         self.includeMenus = includeMenus; self.includeApplications = includeApplications
     }
 
@@ -87,76 +87,75 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         handles.removeAll(); applications.removeAll(); undoTargetID = nil
         window = Element(value: root); processID = pid; observedAt = .now
         var targets: [VoiceControlTarget] = []
-        var text: [String] = []
-        var stack: [(AXUIElement, Int, Bool)] = []
-        if includeMenus, !Self.isBrowserBundle(bundle), let menu = Self.element(app, kAXMenuBarAttribute) {
-            stack.append((menu, 0, false))
-        }
-        stack.append((root, 0, false))
-        if let focused = Self.element(app, kAXFocusedUIElementAttribute) { stack.append((focused, 0, false)) }
-        var visited: Set<CFHashCode> = []
-        var count = 0
-        var complete = true
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         let focused = Self.element(app, kAXFocusedUIElementAttribute)
         let isBrowser = Self.isBrowserBundle(bundle)
+        var roots: [AXNodeHandle] = []
+        if includeMenus, !isBrowser, let menu = Self.element(app, kAXMenuBarAttribute) {
+            roots.append(AXNodeHandle(menu))
+        }
+        roots.append(AXNodeHandle(root))
+        if let focused { roots.append(AXNodeHandle(focused)) }
+        // Display and window geometry are read once per observation, not per node.
+        let display = Self.activeDisplayBounds()
+        let windowFrame = Self.frame(root)
+        let walk = AXTreeWalk.run(
+            roots: roots, source: LiveAXTreeSource(), display: display, window: windowFrame,
+            focused: focused.map(AXNodeHandle.init), caps: walkCaps)
+        try Task.checkCancellation()
+        var complete = walk.complete
+        let text = walk.staticText
         var pending: [(target: VoiceControlTarget, bound: BoundTarget, inWeb: Bool)] = []
-        while let (node, depth, inWebArea) = stack.popLast() {
-            try Task.checkCancellation()
-            guard count < maxNodes, ContinuousClock.now < deadline else { complete = false; break }
-            let hash = CFHash(node)
-            guard visited.insert(hash).inserted else { continue }
-            count += 1
-            let role = Self.string(node, kAXRoleAttribute)
-            guard !Self.isSecure(node, role: role), Self.attribute(node, "AXHidden") as? Bool != true else { continue }
-            var label = Self.label(node)
-            let visible = Self.isVisible(node, within: root)
-            let readableValue = visible ? Self.attribute(node, kAXValueAttribute) : nil
+        for entry in walk.candidates {
+            let node = entry.node.element
+            let role = entry.facts.role
+            guard !Self.isSecure(node, role: role) else { continue }
+            var label = entry.facts.label
+            let readableValue = Self.attribute(node, kAXValueAttribute)
             let value = (readableValue as? String) ?? (readableValue as? NSNumber)?.stringValue ?? ""
             let enabled = Self.attribute(node, kAXEnabledAttribute) as? Bool ?? true
             var operations: Set<VoiceControlOperation> = []
-            var actionNames: CFArray?
-            AXUIElementCopyActionNames(node, &actionNames)
-            let actions = actionNames as? [String] ?? []
-            if visible { label = Self.actionLabel(label, value: value, role: role, pressable: actions.contains(kAXPressAction)) }
-            if visible, enabled, actions.contains(kAXPressAction) { operations.insert(.press) }
-            if visible, enabled {
+            label = Self.actionLabel(label, value: value, role: role, pressable: entry.facts.pressable)
+            if enabled, entry.facts.pressable { operations.insert(.press) }
+            if enabled, AXTreeWalk.textRoles.contains(role) {
                 operations.formUnion(Self.textOperations(
                     role: role, readableValue: readableValue is String,
                     valueSettable: Self.settable(node, kAXValueAttribute),
                     selectionSettable: Self.settable(node, kAXSelectedTextAttribute)))
             }
-            if visible, role == kAXScrollAreaRole { operations.insert(.scroll) }
-            if visible, let focused, CFEqual(focused, node), enabled { operations.insert(.key) }
-            var inWeb = inWebArea || role == "AXWebArea"
-            if isBrowser, !inWeb, !operations.isEmpty { inWeb = Self.ancestorIsWebArea(node) }
-            if !operations.isEmpty {
-                let publicLabel = Self.contextLabel(label, role: role)
-                let target = VoiceControlTarget(
-                    id: "pending", label: String(publicLabel.prefix(240)), role: role,
-                    value: value.isEmpty || publicLabel != label ? nil : String(value.prefix(500)), operations: operations,
-                    isNavigation: Self.isOrdinaryControl(role: role, pressable: operations.contains(.press)),
-                    isFocused: focused.map { CFEqual($0, node) } ?? false,
-                    selectedText: Self.completeSelection(node),
-                    valueIsComplete: value.count <= 500)
-                pending.append(
-                    (
-                        target,
-                        BoundTarget(
-                            element: Element(value: node), target: target, fingerprint: Self.fingerprint(node)),
-                        inWeb
-                    ))
-            } else if visible, role == kAXStaticTextRole, !label.isEmpty || !value.isEmpty, text.joined().count < 3000 {
-                text.append(String((label.isEmpty ? value : label).prefix(250)))
-            }
-            let closedMenu = role == kAXMenuBarItemRole && (Self.attribute(node, kAXSelectedAttribute) as? Bool != true)
-            if !closedMenu, let children = Self.attribute(node, kAXChildrenAttribute) as? [AXUIElement] {
-                if depth < 32 {
-                    if children.count > 250 { complete = false }
-                    stack.append(contentsOf: children.prefix(250).reversed().map { ($0, depth + 1, inWeb) })
-                } else if !children.isEmpty { complete = false }
-            }
+            if role == kAXScrollAreaRole { operations.insert(.scroll) }
+            if entry.isFocused, enabled { operations.insert(.key) }
+            guard !operations.isEmpty else { continue }
+            var inWeb = entry.inWebArea
+            if isBrowser, !inWeb { inWeb = Self.ancestorIsWebArea(node) }
+            let publicLabel = Self.contextLabel(label, role: role)
+            let target = VoiceControlTarget(
+                id: "pending", label: String(publicLabel.prefix(240)), role: role,
+                value: value.isEmpty || publicLabel != label ? nil : String(value.prefix(500)), operations: operations,
+                isNavigation: Self.isOrdinaryControl(role: role, pressable: operations.contains(.press)),
+                isFocused: entry.isFocused,
+                selectedText: AXTreeWalk.textRoles.contains(role) ? Self.completeSelection(node) : nil,
+                valueIsComplete: value.count <= 500)
+            pending.append(
+                (target, BoundTarget(element: Element(value: node), target: target, fingerprint: Self.fingerprint(node)), inWeb))
         }
+        // Off-screen pressables: reachable by AXPress, addressable only by exact name.
+        // A label the visible list already carries is dropped: the on-screen
+        // control is the better way to reach it, and one label must not split.
+        let visibleLabels = Set(pending.map { $0.target.label.lowercased() })
+        var offscreenKeys = Set<String>()
+        for entry in walk.offscreen.prefix(walkCaps.offscreenCap) {
+            let node = entry.node.element
+            guard !Self.isSecure(node, role: entry.facts.role) else { continue }
+            let key = entry.facts.role + "|" + entry.facts.label.lowercased()
+            guard !visibleLabels.contains(entry.facts.label.lowercased()), offscreenKeys.insert(key).inserted else { continue }
+            let target = VoiceControlTarget(
+                id: "pending", label: String(Self.contextLabel(entry.facts.label, role: entry.facts.role).prefix(240)),
+                role: entry.facts.role, operations: [.press],
+                isNavigation: Self.isOrdinaryControl(role: entry.facts.role, pressable: true), isOffscreen: true)
+            pending.append(
+                (target, BoundTarget(element: Element(value: node), target: target, fingerprint: Self.fingerprint(node)), entry.inWebArea))
+        }
+        if walk.visited >= walkCaps.maxNodes { complete = false }
         let hasWebContent = pending.contains { $0.inWeb }
         for item in pending
         where Self.keepOfferedControl(
@@ -168,7 +167,8 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 id: id, label: item.target.label, role: item.target.role, value: item.target.value,
                 operations: item.target.operations, isNavigation: item.target.isNavigation,
                 isFocused: item.target.isFocused, selectedText: item.target.selectedText,
-                valueIsComplete: item.target.valueIsComplete, consequence: item.target.consequence)
+                valueIsComplete: item.target.valueIsComplete, consequence: item.target.consequence,
+                isOffscreen: item.target.isOffscreen)
             handles[id] = BoundTarget(
                 element: item.bound.element, target: target, fingerprint: item.bound.fingerprint)
             targets.append(target)
@@ -211,7 +211,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         let snapshot = VoiceControlSnapshot(
             id: snapshotID, contextID: contextID, applicationName: name,
             targets: targets, summary: String(([title] + text).joined(separator: "\n").prefix(4000)),
-            isComplete: complete && stack.isEmpty)
+            isComplete: complete)
         current = snapshot
         return snapshot
     }
@@ -261,8 +261,9 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             throw NativeVoiceControlError.unsupported
         }
         let node = bound.element.value
-        guard Self.isVisible(node, within: expectedWindow.value), Self.fingerprint(node) == bound.fingerprint,
-            !Self.isSecure(node, role: bound.target.role)
+        // An off-screen control is pressed by identity; there is no pixel to check.
+        guard bound.target.isOffscreen || Self.isVisible(node, within: expectedWindow.value),
+            Self.fingerprint(node) == bound.fingerprint, !Self.isSecure(node, role: bound.target.role)
         else {
             throw NativeVoiceControlError.targetChanged
         }
@@ -556,6 +557,28 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         "tab": 48, "escape": 53, "enter": 36, "return": 36,
         "left": 123, "right": 124, "down": 125, "up": 126, "backspace": 51, "delete": 117,
     ]
+    /// Union of the active displays, read once per observation.
+    static func activeDisplayBounds() -> CGRect {
+        var displays = [CGDirectDisplayID](repeating: 0, count: 32)
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(32, &displays, &count) == .success, count > 0 else { return .infinite }
+        return displays.prefix(Int(count)).map(CGDisplayBounds).reduce(CGRect.null) { $0.union($1) }
+    }
+    static func frame(_ node: AXUIElement) -> CGRect? {
+        guard let rawPosition = attribute(node, kAXPositionAttribute),
+            let rawSize = attribute(node, kAXSizeAttribute),
+            CFGetTypeID(rawPosition) == AXValueGetTypeID(), CFGetTypeID(rawSize) == AXValueGetTypeID()
+        else { return nil }
+        let position = unsafeDowncast(rawPosition as AnyObject, to: AXValue.self)
+        let size = unsafeDowncast(rawSize as AnyObject, to: AXValue.self)
+        guard AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize else { return nil }
+        var point = CGPoint.zero; var extent = CGSize.zero
+        guard AXValueGetValue(position, .cgPoint, &point), AXValueGetValue(size, .cgSize, &extent) else { return nil }
+        return CGRect(origin: point, size: extent)
+    }
+    static func attributeValue(_ node: AXUIElement, _ name: String) -> CFTypeRef? { attribute(node, name) }
+    static func stringValue(_ node: AXUIElement, _ name: String) -> String { string(node, name) }
+    static func labelValue(_ node: AXUIElement) -> String { label(node) }
     private static func attribute(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
         AXUIElementSetMessagingTimeout(node, 0.15)
         var value: CFTypeRef?
@@ -765,5 +788,41 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         guard AXValueGetType(value) == .cfRange else { return nil }
         var range = CFRange()
         return AXValueGetValue(value, .cfRange, &range) ? range : nil
+    }
+}
+
+
+/// `AXUIElement` as a hashable node for `AXTreeWalk`. Two fetches of one
+/// control compare equal, so a self-listing app is walked once.
+struct AXNodeHandle: Hashable, @unchecked Sendable {
+    let element: AXUIElement
+    init(_ element: AXUIElement) { self.element = element }
+    static func == (lhs: AXNodeHandle, rhs: AXNodeHandle) -> Bool { CFEqual(lhs.element, rhs.element) }
+    func hash(into hasher: inout Hasher) { hasher.combine(CFHash(element)) }
+}
+
+/// The production tree source. Reads only the facts the walk needs; the
+/// adapter reads values, settability and selection for the kept nodes.
+struct LiveAXTreeSource: AXTreeSource {
+    typealias Node = AXNodeHandle
+    func children(of node: AXNodeHandle) -> [AXNodeHandle] {
+        (NativeVoiceControlAdapter.attributeValue(node.element, kAXChildrenAttribute) as? [AXUIElement] ?? []).map(AXNodeHandle.init)
+    }
+    func facts(of node: AXNodeHandle) -> AXWalkFacts {
+        let element = node.element
+        let role = NativeVoiceControlAdapter.stringValue(element, kAXRoleAttribute)
+        var actionNames: CFArray?
+        AXUIElementCopyActionNames(element, &actionNames)
+        let actions = actionNames as? [String] ?? []
+        let text: String? =
+            role == kAXStaticTextRole ? (NativeVoiceControlAdapter.attributeValue(element, kAXValueAttribute) as? String) : nil
+        return AXWalkFacts(
+            role: role, label: NativeVoiceControlAdapter.labelValue(element),
+            frame: NativeVoiceControlAdapter.frame(element),
+            hidden: NativeVoiceControlAdapter.attributeValue(element, "AXHidden") as? Bool == true,
+            pressable: actions.contains(kAXPressAction),
+            menuOpen: role == kAXMenuBarItemRole
+                && NativeVoiceControlAdapter.attributeValue(element, kAXSelectedAttribute) as? Bool == true,
+            text: text)
     }
 }
