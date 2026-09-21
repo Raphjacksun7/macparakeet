@@ -218,6 +218,7 @@ final class SpecCommandTests: XCTestCase {
                 "transcript",
                 "transforms",
                 "vocab",
+                "voice-control",
             ],
             "The spec catalog is a curated agent-facing surface; update this expectation when that surface changes."
         )
