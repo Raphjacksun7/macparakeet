@@ -84,7 +84,7 @@ The current implementation supports these provider/runtime types through one sha
 | **Transforms** | System-wide selected-text rewrites through saved prompts/hotkeys | User-selected text in other apps |
 | **Custom Prompts** | User-defined transcript prompt outputs | File, URL, and meeting transcriptions |
 
-LLM features stay explicit and provider-backed. The app still ships no bundled/default LLM and no voice Command Mode. AI Formatter runs only after local STT has produced text; it is optional, can be disabled, and never changes the fact that audio stays local.
+LLM features stay explicit and provider-backed. The app still ships no bundled/default LLM. The separately enabled Voice Control surface is authorized for implementation by [ADR-033](033-explicit-voice-control.md); its Jev decision context and consent are distinct from writing-provider configuration. AI Formatter runs only after local STT has produced text; it is optional, can be disabled, and never changes the fact that audio stays local.
 
 ## Rationale
 

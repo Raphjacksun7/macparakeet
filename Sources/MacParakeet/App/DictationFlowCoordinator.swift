@@ -141,6 +141,7 @@ final class DictationFlowCoordinator {
 
     /// Set after init; updated when dictation hotkey managers are recreated.
     var hotkeyManagers: [HotkeyManager] = []
+    var onInteractionBusy: (() -> Void)?
 
     // MARK: - Dependencies
 
@@ -201,6 +202,9 @@ final class DictationFlowCoordinator {
 
     /// Telemetry trigger for the current dictation flow.
     private var currentTrigger: TelemetryDictationTrigger = .hotkey
+    private let mutationArbiter: GUIMutationArbiter
+    private var interactionLease: GUIMutationArbiter.Lease?
+    private var foregroundInsertions = 0
     /// The Dictation object from the most recent transcription, used for paste + DB save.
     private var currentDictation: Dictation?
     /// Insertion style used to shape the most recent dictation result, used for paste spacing.
@@ -220,6 +224,7 @@ final class DictationFlowCoordinator {
 
     init(
         dictationService: DictationService,
+        mutationArbiter: GUIMutationArbiter? = nil,
         clipboardService: ClipboardServiceProtocol,
         streamingInserter: any StreamingCursorInserting = StreamingCursorInserter(),
         shouldReduceMotion: @escaping () -> Bool = {
@@ -264,6 +269,7 @@ final class DictationFlowCoordinator {
         self.mediaPauseCoordinator = mediaPauseCoordinator ?? NoOpDictationMediaPauseCoordinator()
         self.overlayControllerFactory = overlayControllerFactory
         self.shouldSuppressIdlePill = shouldSuppressIdlePill
+        self.mutationArbiter = mutationArbiter ?? GUIMutationArbiter()
         self.isStartSuppressed = isStartSuppressed
         self.onMenuBarIconUpdate = onMenuBarIconUpdate
         self.onHistoryReload = onHistoryReload
@@ -372,6 +378,10 @@ final class DictationFlowCoordinator {
         // Suppressed while onboarding is up — the speech model isn't ready and
         // the hotkey step runs its own no-STT rehearsal. Covers hotkey + pill.
         guard !isStartSuppressed() else { return }
+        if interactionLease == nil {
+            guard let lease = mutationArbiter.acquire(.dictation) else { onInteractionBusy?(); return }
+            interactionLease = lease
+        }
         currentTrigger = trigger
         sendEvent(.startRequested(mode: mode))
     }
@@ -422,6 +432,15 @@ final class DictationFlowCoordinator {
         }
 
         executeEffects(effects)
+
+        switch stateMachine.state {
+        case .idle, .ready, .finishing:
+            if foregroundInsertions == 0, let interactionLease {
+                mutationArbiter.release(interactionLease)
+                self.interactionLease = nil
+            }
+        default: break
+        }
 
         if Self.mediaPauseCaptureActive(for: oldState),
            !Self.mediaPauseCaptureActive(for: stateMachine.state) {
@@ -660,7 +679,19 @@ final class DictationFlowCoordinator {
                 && transcriptHasText
                 && StreamingCursorPolicy.isStreamable(insertText)
 
+            foregroundInsertions += 1
             let work = { @MainActor in
+                defer {
+                    self.foregroundInsertions -= 1
+                    switch self.stateMachine.state {
+                    case .idle, .ready, .finishing:
+                        if self.foregroundInsertions == 0, let lease = self.interactionLease {
+                            self.mutationArbiter.release(lease)
+                            self.interactionLease = nil
+                        }
+                    default: break
+                    }
+                }
                 var completedDictation = dictation
                 let pastedToAppAtDispatch = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 let keepDictationOnClipboard = self.runtimePreferences.shouldKeepDictationOnClipboard

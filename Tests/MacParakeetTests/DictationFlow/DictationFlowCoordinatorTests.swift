@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class DictationFlowCoordinatorTests: XCTestCase {
+    func testVoiceControlCannotAcquireDuringDictationCancelUndoWindow() async throws {
+        let arbiter = GUIMutationArbiter()
+        let harness = try await makeRecordingHarness(mutationArbiter: arbiter)
+        harness.coordinator.startDictation(mode: .persistent)
+        let started = await waitUntil { self.isFlowRecording(harness.coordinator.flowStateForTesting) }
+        XCTAssertTrue(started)
+        XCTAssertNil(arbiter.acquire(.voiceControl))
+        harness.coordinator.cancelDictation()
+        XCTAssertEqual(harness.coordinator.flowStateForTesting, .cancelCountdown)
+        XCTAssertNil(arbiter.acquire(.voiceControl), "Undo can still resume this dictation")
+        harness.coordinator.cancelDictation()
+        XCTAssertEqual(harness.coordinator.flowStateForTesting, .idle)
+        XCTAssertNotNil(arbiter.acquire(.voiceControl))
+    }
+
     func testPillStartedPersistentRecordingSyncsFnHotkeyToStop() async throws {
         let harness = try await makeRecordingHarness()
         let fnManager = HotkeyManager(trigger: .fn)
@@ -508,7 +523,7 @@ final class DictationFlowCoordinatorTests: XCTestCase {
         )
     }
 
-    private func makeRecordingHarness() async throws -> RecordingHarness {
+    private func makeRecordingHarness(mutationArbiter: GUIMutationArbiter? = nil) async throws -> RecordingHarness {
         let dbManager = try DatabaseManager()
         let audio = MockAudioProcessor()
         let stt = MockSTTClient()
@@ -534,6 +549,7 @@ final class DictationFlowCoordinatorTests: XCTestCase {
 
         let coordinator = DictationFlowCoordinator(
             dictationService: service,
+            mutationArbiter: mutationArbiter,
             clipboardService: clipboard,
             entitlementsService: entitlements,
             dictationRepo: repo,

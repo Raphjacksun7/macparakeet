@@ -17,8 +17,18 @@ public enum AppFeatures {
         #endif
     }
 
-    /// Experimental speaker recognition. Release availability requires a
-    /// deliberate flag change after held-out meeting evaluation passes.
+    /// Experimental native Voice Control. Disabled in stable releases until
+    /// live qualification and release review justify a deliberate flag change.
+    public static let voiceControlEnabled = false
+    public static func isVoiceControlAvailable(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+        #if DEBUG
+        voiceControlEnabled || arguments.contains("--enable-voice-control")
+        #else
+        voiceControlEnabled
+        #endif
+    }
+
+    /// Experimental speaker recognition; requires held-out meeting evaluation.
     public static let voiceProfilesEnabled: Bool = false
     public static let voiceProfilesDeveloperLaunchArgument = "--enable-voice-profiles"
 
