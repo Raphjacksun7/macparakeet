@@ -89,6 +89,19 @@ by checking exit code first: `2` = misuse, `1` = runtime, `0` = success.
 
 ## [Unreleased]
 
+## [4.5.0] — 2026-09-20
+
+### Added
+
+- `voice-control replay <session.json> [--goal …] [--observation N]
+  [--history op:targetID[:receipt],…] [--jev] [--json]` routes an instruction
+  against a saved Voice Control observation (`latest.json` or
+  `sessions/*.json`) without touching the screen. Reports the compiled local
+  action or the Jev request the router would have sent; with `--jev` and
+  `JEV_API_KEY`, also the per-head probability distribution. Experimental:
+  the Voice Control feature itself is a DEBUG-only app experiment, and this
+  command's JSON shape may change while it is.
+
 ## [4.4.0] — 2026-09-18
 
 ### Added

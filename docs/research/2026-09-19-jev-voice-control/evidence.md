@@ -44,9 +44,11 @@ Typed text is not a selected airport. Calendar day names include weekday, month,
 
 After a turn:
 
-1. `/tmp/macparakeet-voice-control/latest.md` — one wide event: outcome, why, actor (`local` / `jev`), route, last control, last receipt
-2. `latest.json` — the same plus joinable per-step records
-3. `events.jsonl` — streaming steps, one `type=turn` when the loop stops
+1. `/tmp/macparakeet-voice-control/latest.md` — one wide event: outcome, why, actor (`local` / `jev`), route, last control, last receipt, per-stage timing (mean/max), and the last Jev request's top options per head
+2. `latest.json` — the same plus joinable per-step records, replayable observations (window text, targets without values) and every Jev probability under `decisions[]`
+3. `events.jsonl` — streaming steps, one `type=decision` per model request, one `type=turn` when the loop stops
+
+Reproduce a stall offline: `macparakeet-cli voice-control replay latest.json --goal "…"` runs the router against a saved observation and prints the compiled action or the Jev request it would send (`--jev` sends it). Dry run through the inbox: `{"action":"submit","text":"…","dryRun":true}` observes, routes, decides, and reports "would press …" without executing.
 
 Local logs may include the instruction and control labels. Copy diagnostics strips names and keeps opaque ids. Field values, selected text, audio, screenshots, credentials, and remote bodies stay out.
 

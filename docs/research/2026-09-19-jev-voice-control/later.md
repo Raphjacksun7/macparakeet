@@ -19,14 +19,6 @@ Ship the silent, native loop first. Nothing below is required to keep unique loc
 - One named missing-slot question (“Need a destination”)
 - Semantic freshness guards and loop-breaking on (action, screen signature), excluding clocks
 
-## Spoken replies
+## Observability, perception, decision shape, second source
 
-On-device `AVSpeechSynthesizer`. Short templated lines: “Need a destination”, “Done — check the results.” Do not read page contents, field values, or API errors. Hold-to-talk or Stop cancels speech. No ElevenLabs, no cloud TTS, no personality voice.
-
-## Jev CLI
-
-Unix-filter CLIs are useful later as an eval workbench on **redacted** fixtures. Production already calls System One over HTTPS from `JevDecisionClient`. Do not shell out with the key, and do not replace that client.
-
-## Explicitly out of scope
-
-Chrome DevTools Protocol, a required extension, an automation browser, screenshot-to-cloud, generated AppleScript or tools, OCR as a primary grounder, OpenRouter planners, local HTTP harnesses, coordinate clicking as targeting, always-on listening, unattended send/book.
+Plan: `plans/active/2026-09-20-voice-control-observability-perception-decision.md`; background review under `docs/research/2026-09-20-typesafe-computer-use/`. Done: every Jev probability in the log, replayable observations, `voice-control replay`, inbox dry run, per-stage timing. Next: `AXTreeWalk` as a pure function over an injectable tree with off-screen pressables; one small disjoint question set for the open-ended decision (`kind` / `target` / focused `value`); on-device Vision OCR as a second source of targets and state.
