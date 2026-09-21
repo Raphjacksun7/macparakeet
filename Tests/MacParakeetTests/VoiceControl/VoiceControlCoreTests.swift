@@ -83,11 +83,11 @@ final class VoiceControlCoreTests: XCTestCase {
         XCTAssertFalse(String(decoding: body, as: UTF8.self).contains(selected))
         XCTAssertEqual(snapshot.targets[0].selectedText, selected)
         let questions = try XCTUnwrap(json["questions"] as? [String: [String: Any]])
-        let direction = try XCTUnwrap(questions["direction"]?["criteria"] as? [String: String])
-        XCTAssertEqual(Set(direction.keys), ["up", "down"])
         XCTAssertNil(questions["key"])
-        let operations = try XCTUnwrap(questions["operation"]?["criteria"] as? [String: String])
-        XCTAssertFalse(operations.keys.contains("key"))
+        XCTAssertNil(questions["direction"], "no scrollable target, so no direction head")
+        let kinds = try XCTUnwrap(questions["kind"]?["criteria"] as? [String: String])
+        XCTAssertEqual(Set(kinds.keys), ["fill", "finished", "none"], "one disjoint kind set; keys and consequence never join it")
+        XCTAssertEqual(Set(questions.keys), ["kind", "target", "consequence"], "the field is not focused, so there is no value head")
     }
 
     func testJevRequestOmitsAppSwitchingWhenPageControlsExist() async throws {
@@ -120,7 +120,9 @@ final class VoiceControlCoreTests: XCTestCase {
         XCTAssertFalse(encoded.contains("Google Flights"))
         XCTAssertFalse(encoded.contains("web:google-flights"))
         let questions = try XCTUnwrap(json["questions"] as? [String: [String: Any]])
-        XCTAssertNil(questions["target_activateApp"])
+        let targetCriteria = try XCTUnwrap(questions["target"]?["criteria"] as? [String: String])
+        XCTAssertEqual(Set(targetCriteria.keys), ["from", "none"])
+        XCTAssertEqual(targetCriteria["from"], "combo field 'Where from?' (empty)")
         let observation = try XCTUnwrap((json["state"] as? [String: Any])?["observation"] as? [String: Any])
         let targets = try XCTUnwrap(observation["targets"] as? [[String: Any]])
         XCTAssertEqual(targets.map { $0["id"] as? String }, ["from"])
@@ -181,7 +183,9 @@ final class VoiceControlCoreTests: XCTestCase {
 
     func testNoNetworkWithoutConsentAndErrorsNeverEchoResponse() async throws {
         let calls = CoreTransportCounter()
-        let snapshot = VoiceControlSnapshot(contextID: "test", applicationName: "Fixture", targets: [])
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Fixture",
+            targets: [VoiceControlTarget(id: "n:0", label: "Save", role: "AXButton", operations: [.press])])
         let denied = JevDecisionClient(
             apiKey: "test-secret", consent: { false },
             transport: { request in

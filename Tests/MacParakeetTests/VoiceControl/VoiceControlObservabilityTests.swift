@@ -99,9 +99,7 @@ final class VoiceControlObservabilityTests: XCTestCase {
         XCTAssertEqual(trace.kind, "unconstrained")
         XCTAssertEqual(trace.resolution, "clarify")
         XCTAssertEqual(trace.situation, "plain")
-        XCTAssertTrue(trace.heads.keys.contains("operation"))
-        XCTAssertTrue(trace.heads.keys.contains("target_press"))
-        XCTAssertTrue(trace.heads.keys.contains("consequence"))
+        XCTAssertEqual(Set(trace.heads.keys), ["kind", "target", "consequence"])
     }
 
     // MARK: Trace store

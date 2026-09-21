@@ -151,14 +151,17 @@ final class VoiceControlRecoveryTests: XCTestCase {
             var answers: [String: Any] = [:]
             for (id, question) in questions {
                 let options = question["criteria"] as! [String: String]
-                let choice = id == "operation" ? "clarify" : options.keys.sorted()[0]
+                let choice = id == "kind" ? "none" : options.keys.sorted()[0]
                 let probabilities = Dictionary(uniqueKeysWithValues: options.keys.map { ($0, $0 == choice ? 1.0 : 0.0) })
                 answers[id] = ["type": "choice", "choice": choice, "probabilities": probabilities, "confidence": 1.0]
             }
             let data = try JSONSerialization.data(withJSONObject: ["model": JevDecisionClient.model, "answers": answers])
             return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         })
-        let result = try await client.decide(goal: "Do that", snapshot: .init(contextID: "fixture", applicationName: "Fixture", targets: []), history: [])
+        let snapshot = VoiceControlSnapshot(
+            contextID: "fixture", applicationName: "Fixture",
+            targets: [VoiceControlTarget(id: "n:0", label: "Save", role: "AXButton", operations: [.press])])
+        let result = try await client.decide(goal: "Do that", snapshot: snapshot, history: [])
         XCTAssertEqual(result, .clarify("I need more detail about the next step or requested outcome. What should happen next?"))
     }
 

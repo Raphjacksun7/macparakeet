@@ -122,6 +122,34 @@ final class VoiceControlMachineTests: XCTestCase {
                     postcondition: .selectedLabel("Zürich, Switzerland"))))
     }
 
+    func testSpokenDatePressesTheMatchingCalendarDay() throws {
+        let plan = try XCTUnwrap(
+            VoiceControlFlightPlan.parse("Find one-way flights from Zurich to London on September 20 2026"))
+        let snapshot = VoiceControlSnapshot(
+            contextID: "test", applicationName: "Google Chrome",
+            targets: [
+                VoiceControlTarget(
+                    id: "day20", label: "Saturday, September 20, 2026, $412", role: "AXButton", operations: [.press]),
+                VoiceControlTarget(
+                    id: "day21", label: "Sunday, September 21, 2026", role: "AXButton", operations: [.press]),
+            ])
+        let action = plan.nextAction(
+            in: snapshot,
+            history: [
+                VoiceControlAction(
+                    operation: .press, targetID: "web:google-flights", receiptStatus: .transitionObserved),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "from", value: "Zurich", receiptStatus: .verified),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "to", value: "London", receiptStatus: .verified),
+                VoiceControlAction(
+                    operation: .setValue, targetID: "departure", value: "September 20 2026",
+                    receiptStatus: .verified),
+            ])
+        XCTAssertEqual(action?.operation, .press)
+        XCTAssertEqual(action?.targetID, "day20")
+    }
+
     func testJevEventChoiceExecutesOnlyTheOfferedEvent() async throws {
         let events = [
             VoiceControlEnabledEvent(
@@ -150,7 +178,7 @@ final class VoiceControlMachineTests: XCTestCase {
                 XCTAssertEqual(
                     Set((criteria ?? [:]).keys),
                     ["pick-london", "pick-ontario", "insufficient_evidence", "clarify"])
-                XCTAssertNil(questions?["operation"])
+                XCTAssertNil(questions?["kind"])
                 XCTAssertNil(questions?["key"])
                 let answers: [String: Any] = [
                     "outcome": [
@@ -191,8 +219,11 @@ final class VoiceControlMachineTests: XCTestCase {
         let json = try JSONSerialization.jsonObject(with: await capture.body) as? [String: Any]
         let questions = json?["questions"] as? [String: [String: Any]]
         XCTAssertNil(questions?["key"])
-        let operations = questions?["operation"]?["criteria"] as? [String: String]
-        XCTAssertFalse((operations ?? [:]).keys.contains("key"))
+        let kinds = questions?["kind"]?["criteria"] as? [String: String]
+        XCTAssertFalse((kinds ?? [:]).keys.contains("key"))
+        let targetCriteria = questions?["target"]?["criteria"] as? [String: String]
+        XCTAssertFalse(
+            (targetCriteria ?? [:]).keys.contains("search"), "Search is illegal while the picker is open")
         let observation = (json?["state"] as? [String: Any])?["observation"] as? [String: Any]
         let targets = observation?["targets"] as? [[String: Any]]
         XCTAssertEqual((targets ?? []).compactMap { $0["id"] as? String }.sorted(), ["c0", "else"])
