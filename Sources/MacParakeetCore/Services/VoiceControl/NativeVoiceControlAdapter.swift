@@ -175,7 +175,8 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 return (item.target.label, frame)
             }
             let result = Self.textTargets(
-                from: blocks, controls: controls, excludedFrames: secureFrames, existingText: text)
+                from: blocks, controls: controls,
+                excludedFrames: secureFrames + Self.ownWindowFrames(), existingText: text)
             // Text targets follow the page: in a browser with web content they are web content.
             let textInWeb = isBrowser && pending.contains { $0.inWeb }
             for (target, block) in zip(result.targets, result.blocks) {
@@ -677,6 +678,21 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         "tab": 48, "escape": 53, "enter": 36, "return": 36,
         "left": 123, "right": 124, "down": 125, "up": 126, "backspace": 51, "delete": 117,
     ]
+    /// Frames of this process's own on-screen windows (the Voice Control panel,
+    /// the menu bar extra's popover). Text drawn there — the user's instruction,
+    /// our status lines — is never the app's screen text.
+    static func ownWindowFrames() -> [CGRect] {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.compactMap { window in
+            guard window[kCGWindowOwnerPID as String] as? Int32 == pid,
+                let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let x = bounds["X"], let y = bounds["Y"], let w = bounds["Width"], let h = bounds["Height"], w > 0, h > 0
+            else { return nil }
+            return CGRect(x: x, y: y, width: w, height: h)
+        }
+    }
+
     /// Union of the active displays, read once per observation.
     static func activeDisplayBounds() -> CGRect {
         var displays = [CGDirectDisplayID](repeating: 0, count: 32)
