@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Vision
@@ -13,35 +14,116 @@ public struct ScreenTextBlock: Sendable, Equatable {
     }
 }
 
-/// Reads the frontmost window's pixels with Vision. Never persists or transmits an image.
+/// Reads one verified window. Pixels never leave this actor and no image is kept.
 public protocol ScreenTextReading: Sendable {
-    /// Returns [] when Screen Recording is not granted. `window` is the AX window frame in screen points.
-    func read(window: CGRect) async -> [ScreenTextBlock]
+    /// Returns [] when Screen Recording is denied, the window cannot be identified, or the app is no longer frontmost.
+    func read(window: CGRect, processID: Int32) async -> [ScreenTextBlock]
 }
 
-/// Pixels stay in this actor: captured, recognised, reduced to text and a tiny
-/// grayscale thumbnail used only to skip Vision on an unchanged frame.
-public actor VisionScreenTextReader: ScreenTextReading {
-    private var lastThumbnail: [UInt8] = []
-    private var lastWindow: CGRect = .null
-    private var lastBlocks: [ScreenTextBlock] = []
+struct ScreenTextCaptureWindow: Equatable, Sendable {
+    let id: CGWindowID
+    let processID: Int32
+    let frame: CGRect
+    let layer: Int
+}
 
+struct ScreenTextCapturePlan: Equatable, Sendable {
+    let windowID: CGWindowID
+    let exclusions: [CGRect]
+
+    /// Window-server order is front to back. Two windows with the same frame fail closed.
+    static func resolve(window: CGRect, processID: Int32, windows: [ScreenTextCaptureWindow]) -> Self? {
+        guard ScreenTextMerge.validFrame(window), window.width * window.height <= 16_000_000 else { return nil }
+        let matches = windows.indices.filter {
+            windows[$0].processID == processID && windows[$0].layer == 0 && windows[$0].frame == window
+        }
+        guard matches.count == 1, let index = matches.first else { return nil }
+        let exclusions = windows.prefix(index).map(\.frame).filter { $0.intersects(window) }
+        guard exclusions.allSatisfy(ScreenTextMerge.validFrame) else { return nil }
+        return Self(windowID: windows[index].id, exclusions: exclusions)
+    }
+}
+
+/// Every read uses a fresh image of that window id. A rectangle capture would
+/// include whatever else is painted on top, and a thumbnail skip can keep a
+/// word that has since changed.
+public actor VisionScreenTextReader: ScreenTextReading {
     public init() {}
 
     public static var hasScreenRecordingAccess: Bool { CGPreflightScreenCaptureAccess() }
     public static func requestScreenRecordingAccess() -> Bool { CGRequestScreenCaptureAccess() }
 
-    public func read(window: CGRect) async -> [ScreenTextBlock] {
-        guard Self.hasScreenRecordingAccess, window.width > 0, window.height > 0,
+    public func read(window: CGRect, processID: Int32) async -> [ScreenTextBlock] {
+        guard Self.hasScreenRecordingAccess, ScreenTextMerge.validFrame(window),
+            await Self.foregroundPID() == processID,
+            let plan = Self.capturePlan(window: window, processID: processID),
             let image = CGWindowListCreateImage(
-                window, [.optionOnScreenOnly], kCGNullWindowID, [.bestResolution, .boundsIgnoreFraming]),
-            image.width > 0, image.height > 0
+                .null, [.optionIncludingWindow], plan.windowID, [.bestResolution, .boundsIgnoreFraming]),
+            image.width > 0, image.height > 0, image.width <= 12_000, image.height <= 12_000,
+            image.width * image.height <= 40_000_000,
+            let redacted = Self.redact(image, window: window, excluding: plan.exclusions)
         else { return [] }
-        let thumbnail = Self.thumbnail(image)
-        if window == lastWindow, Self.meanAbsoluteDifference(thumbnail, lastThumbnail) < 2 { return lastBlocks }
-        let blocks = Self.recognize(image, window: window)
-        lastThumbnail = thumbnail; lastWindow = window; lastBlocks = blocks
-        return blocks
+        guard !Task.isCancelled, await Self.foregroundPID() == processID,
+            Self.capturePlan(window: window, processID: processID) == plan
+        else { return [] }
+        return Self.recognize(redacted, window: window).filter { block in
+            !plan.exclusions.contains { $0.intersects(block.frame) }
+        }
+    }
+
+    private static func foregroundPID() async -> Int32? {
+        await MainActor.run { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+    }
+
+    static func capturePlan(window: CGRect, processID: Int32) -> ScreenTextCapturePlan? {
+        guard
+            let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]]
+        else { return nil }
+        var windows: [ScreenTextCaptureWindow] = []
+        for item in list {
+            if let alpha = item[kCGWindowAlpha as String] as? Double, alpha == 0 { continue }
+            if let alpha = item[kCGWindowAlpha as String] as? NSNumber, alpha.doubleValue == 0 { continue }
+            guard let id = (item[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                let pid = (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                let layer = (item[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                let bounds = item[kCGWindowBounds as String] as? [String: Any],
+                let x = (bounds["X"] as? NSNumber)?.doubleValue,
+                let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+                let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                let height = (bounds["Height"] as? NSNumber)?.doubleValue
+            else { return nil }
+            windows.append(
+                ScreenTextCaptureWindow(
+                    id: id, processID: pid,
+                    frame: CGRect(x: x, y: y, width: width, height: height), layer: layer))
+        }
+        return ScreenTextCapturePlan.resolve(window: window, processID: processID, windows: windows)
+    }
+
+    /// Paint overlapping windows black before Vision sees the image.
+    static func redact(_ image: CGImage, window: CGRect, excluding: [CGRect]) -> CGImage? {
+        guard ScreenTextMerge.validFrame(window), excluding.allSatisfy(ScreenTextMerge.validFrame),
+            let context = CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        let scaleX = CGFloat(image.width) / window.width
+        let scaleY = CGFloat(image.height) / window.height
+        for frame in excluding {
+            let clipped = frame.intersection(window)
+            guard ScreenTextMerge.validFrame(clipped) else { continue }
+            context.fill(
+                CGRect(
+                    x: (clipped.minX - window.minX) * scaleX,
+                    y: (window.maxY - clipped.maxY) * scaleY,
+                    width: clipped.width * scaleX, height: clipped.height * scaleY
+                ).integral)
+        }
+        return context.makeImage()
     }
 
     private static func recognize(_ image: CGImage, window: CGRect) -> [ScreenTextBlock] {
@@ -50,50 +132,34 @@ public actor VisionScreenTextReader: ScreenTextReading {
         request.usesLanguageCorrection = true
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         guard (try? handler.perform([request])) != nil else { return [] }
-        // Normalized boxes are bottom-left origin; the capture covers `window` at `scale` px/pt.
-        let scale = CGFloat(image.width) / window.width
-        let pointWidth = CGFloat(image.width) / scale
-        let pointHeight = CGFloat(image.height) / scale
         var blocks: [ScreenTextBlock] = []
         for observation in request.results ?? [] {
-            guard let candidate = observation.topCandidates(1).first, candidate.confidence >= 0.3 else { continue }
+            guard let candidate = observation.topCandidates(1).first,
+                candidate.confidence.isFinite, candidate.confidence >= 0.3
+            else { continue }
             let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             let box = observation.boundingBox
             let frame = CGRect(
-                x: window.minX + box.minX * pointWidth, y: window.minY + (1 - box.maxY) * pointHeight,
-                width: box.width * pointWidth, height: box.height * pointHeight)
+                x: window.minX + box.minX * window.width,
+                y: window.minY + (1 - box.maxY) * window.height,
+                width: box.width * window.width, height: box.height * window.height)
+            guard ScreenTextMerge.validFrame(frame) else { continue }
             blocks.append(ScreenTextBlock(text: text, confidence: candidate.confidence, frame: frame))
         }
         return blocks
-    }
-
-    /// 1/8-scale 8-bit grayscale bytes; never written anywhere.
-    private static func thumbnail(_ image: CGImage) -> [UInt8] {
-        let width = max(1, image.width / 8), height = max(1, image.height / 8)
-        var bytes = [UInt8](repeating: 0, count: width * height)
-        bytes.withUnsafeMutableBytes { buffer in
-            guard
-                let context = CGContext(
-                    data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
-                    space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
-            else { return }
-            context.interpolationQuality = .low
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        }
-        return bytes
-    }
-
-    private static func meanAbsoluteDifference(_ a: [UInt8], _ b: [UInt8]) -> Double {
-        guard !a.isEmpty, a.count == b.count else { return .infinity }
-        var total = 0
-        for index in a.indices { total += abs(Int(a[index]) - Int(b[index])) }
-        return Double(total) / Double(a.count)
     }
 }
 
 /// Pure geometry/text helpers shared by the reader and the adapter.
 public enum ScreenTextMerge {
+    static func validFrame(_ frame: CGRect) -> Bool {
+        !frame.isInfinite && !frame.isNull
+            && frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.width.isFinite && frame.height.isFinite
+            && frame.width > 0 && frame.height > 0
+    }
+
     static let secureWords = [
         "password", "passcode", "one-time", "verification code", "api key", "secret", "credit card",
     ]

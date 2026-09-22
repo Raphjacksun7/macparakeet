@@ -188,17 +188,11 @@ public actor VoiceControlTurnRunner {
             record(
                 "dispatch", operation: action.operation, outcome: "stale_reobserve",
                 observation: snapshot, action: action)
-            do {
-                let fresh = try await adapter.observe()
-                lastSnapshot = fresh
-                guard let bound = bind(action, to: fresh) else {
-                    record("policy", outcome: "unoffered_target", observation: fresh, action: action)
-                    continuation.yield(.failed("The requested control is no longer available."))
-                    finishSegment()
-                    return
-                }
-                continueGoal = try await perform(bound, snapshot: fresh, authority: authority)
-            } catch { report(error) }
+            // Confirmation authorizes this observation. Target ids are walk
+            // positions, so a fresh snapshot can reuse n:4 for a different control.
+            record("policy", outcome: "confirmation_stale", observation: snapshot, action: action)
+            continuation.yield(
+                .paused("The confirmed interface changed. Repeat or revise the request to review the current action."))
         } catch { report(error) }
         finishSegment()
         if continueGoal, authority.isValid, !cancelled { await run() }

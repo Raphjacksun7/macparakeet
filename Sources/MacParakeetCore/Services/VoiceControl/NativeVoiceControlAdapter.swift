@@ -118,7 +118,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         // its own budget: a slow OCR pass never eats the Accessibility budget.
         let screenTextTask: Task<[ScreenTextBlock], Never>? = {
             guard let screenText, let windowFrame else { return nil }
-            return Task { await screenText.read(window: windowFrame) }
+            return Task { await screenText.read(window: windowFrame, processID: pid) }
         }()
         let walkStarted = ContinuousClock.now
         let walk = AXTreeWalk.run(
