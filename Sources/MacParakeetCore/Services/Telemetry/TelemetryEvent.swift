@@ -567,6 +567,7 @@ public enum TelemetrySettingName: String, Sendable, Equatable {
     case youtubeTranscriptionHotkey = "youtube_transcription_hotkey"
     case microphoneSelection = "microphone_selection"
     case meetingAudioSourceMode = "meeting_audio_source_mode"
+    case startMeetingsMuted = "start_meetings_muted"
     case meetingRecordingPill = "meeting_recording_pill"
     case meetingAutoStop = "meeting_auto_stop"
     case openAppAfterMeetingEnd = "open_app_after_meeting_end"
@@ -577,11 +578,13 @@ public enum TelemetrySettingName: String, Sendable, Equatable {
     case liveDictationPreview = "live_dictation_preview"
     case dictationUndoCountdown = "dictation_undo_countdown"
     case dictationInsertionStyle = "dictation_insertion_style"
+    case removeUmFiller = "remove_um_filler"
     case transcriptionCompletionNotification = "transcription_completion_notification"
 
     case launchAtLogin = "launch_at_login"
     case silenceAutoStop = "silence_auto_stop"
     case keepDictationOnClipboard = "keep_dictation_on_clipboard"
+    case streamingCursor = "streaming_cursor"
     case voiceReturn = "voice_return"
 
     // Calendar auto-start (ADR-017)
