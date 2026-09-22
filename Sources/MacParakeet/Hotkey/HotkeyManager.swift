@@ -17,8 +17,10 @@ public final class HotkeyManager {
     public var onDiscardRecording: ((Bool) -> Void)?
     public var onReadyForSecondTap: (() -> Void)?
     public var onEscapeWhileIdle: (() -> Void)?
-    /// When false, Escape is left for other apps and does not cancel dictation.
-    /// Read from the event tap, so this must not hop to the main actor.
+    /// When false, a live take ignores Escape so the key reaches other apps.
+    /// Pending gestures that have not started a take still clear, and an idle
+    /// overlay still dismisses. Read from the event tap, so this must not hop
+    /// to the main actor.
     public var shouldCancelOnEscape: () -> Bool = { true }
 
     private let gestureController: HotkeyGestureController
@@ -832,7 +834,10 @@ public final class HotkeyManager {
     }
 
     private func escapeOutputs() -> [HotkeyGestureController.Output] {
-        if shouldCancelOnEscape() || gestureController.isIdle {
+        // A pending hold or second-tap window has not started a take, so Escape
+        // still clears it. A live take keeps `activeRecordingMode` set, so
+        // Escape stays ignored when the setting is off.
+        if shouldCancelOnEscape() || activeRecordingMode == nil {
             return gestureController.escapePressed()
         }
         return []

@@ -260,6 +260,67 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertFalse(cancelled.shouldSwallow)
     }
 
+    func testEscapeClearsPendingHoldWhenCancelSettingIsOff() {
+        let manager = HotkeyManager(trigger: .fn, gestureMode: .holdOnly)
+        manager.shouldCancelOnEscape = { false }
+        manager.setPhysicalKeyStateProviderForTesting { _ in false }
+
+        XCTAssertEqual(
+            manager.modifierFlagsChangedOutputsForTesting(
+                flags: [.maskSecondaryFn],
+                timestampMs: 1_000,
+                changedKeyCode: HotkeyTrigger.canonicalFnKeyCode
+            ),
+            [.scheduleStartupDebounce(milliseconds: FnKeyStateMachine.defaultStartupDebounceMs)]
+        )
+        XCTAssertEqual(
+            manager.modifierKeyDownOutputsForTesting(keyCode: 53, timestampMs: 1_020),
+            [.cancelStartupDebounce, .cancelHoldWindow]
+        )
+        XCTAssertEqual(manager.startupDebounceElapsedForTesting(), [])
+    }
+
+    func testEscapeClearsSecondTapWindowWhenCancelSettingIsOff() {
+        let manager = HotkeyManager(trigger: .fn, gestureMode: .doubleTapAndHold)
+        manager.shouldCancelOnEscape = { false }
+        manager.setPhysicalKeyStateProviderForTesting { _ in false }
+
+        XCTAssertEqual(
+            manager.modifierFlagsChangedOutputsForTesting(
+                flags: [.maskSecondaryFn],
+                timestampMs: 1_000,
+                changedKeyCode: HotkeyTrigger.canonicalFnKeyCode
+            ),
+            [
+                .scheduleStartupDebounce(milliseconds: FnKeyStateMachine.defaultStartupDebounceMs),
+                .scheduleHoldWindow(milliseconds: FnKeyStateMachine.defaultTapThresholdMs),
+            ]
+        )
+        XCTAssertEqual(
+            manager.modifierFlagsChangedOutputsForTesting(
+                flags: [],
+                timestampMs: 1_050,
+                changedKeyCode: HotkeyTrigger.canonicalFnKeyCode
+            ),
+            [.cancelStartupDebounce, .cancelHoldWindow, .showReadyForSecondTap]
+        )
+        XCTAssertEqual(
+            manager.modifierKeyDownOutputsForTesting(keyCode: 53, timestampMs: 1_080),
+            [.cancelStartupDebounce, .cancelHoldWindow]
+        )
+        XCTAssertEqual(
+            manager.modifierFlagsChangedOutputsForTesting(
+                flags: [.maskSecondaryFn],
+                timestampMs: 1_100,
+                changedKeyCode: HotkeyTrigger.canonicalFnKeyCode
+            ),
+            [
+                .scheduleStartupDebounce(milliseconds: FnKeyStateMachine.defaultStartupDebounceMs),
+                .scheduleHoldWindow(milliseconds: FnKeyStateMachine.defaultTapThresholdMs),
+            ]
+        )
+    }
+
     func testPassiveFnTapRecoveryReconcilesPreHeldKeyAndFailsClosed() {
         var pressedKeyCodes: Set<UInt16> = []
         let manager = HotkeyManager(trigger: .fn, gestureMode: .holdOnly)

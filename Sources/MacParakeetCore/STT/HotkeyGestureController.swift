@@ -61,18 +61,6 @@ public final class HotkeyGestureController {
         }
     }
 
-    /// True when no gesture is in flight, so Escape can dismiss an error overlay
-    /// without cancelling a take.
-    public var isIdle: Bool {
-        switch mode {
-        case .holdOnly:
-            return holdOnlyState == .idle
-        case .singleTapToggle:
-            return singleTapState == .idle
-        case .doubleTapAndHold, .doubleTapOnly:
-            return stateMachine.state == .idle
-        }
-    }
     private var suppressedUntilReset = false
 
     public init(
