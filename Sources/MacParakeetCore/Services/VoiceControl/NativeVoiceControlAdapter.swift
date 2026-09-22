@@ -38,6 +38,9 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         }
     }
     private let screenText: (any ScreenTextReading)?
+    /// A read that outlasted the observation budget. The next observation of the
+    /// same window uses it; a different window cancels it.
+    private var pendingScreenText: (token: UUID, pid: Int32, frame: CGRect, task: Task<[ScreenTextBlock], Never>)?
     /// Counts from the last `observe()`, for tests and logging. Never carries text.
     public private(set) var lastObservationStats: (axCandidates: Int, screenTextBlocks: Int, screenTextTargets: Int) =
         (0, 0, 0)
@@ -61,13 +64,18 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
             "com.apple.keychainaccess", "com.1password.1password", "com.agilebits.onepassword7",
             "com.bitwarden.desktop", "com.apple.Passwords",
         ], maxNodes: Int = 1_200, includeMenus: Bool = true, includeApplications: Bool = true,
-        screenText: (any ScreenTextReading)? = nil
+        screenText: (any ScreenTextReading)? = nil, expectedProcessID: Int32? = nil
     ) {
         self.excludedBundleIDs = excludedBundleIDs
         self.walkCaps = AXWalkCaps(maxNodes: min(2_000, max(1, maxNodes)))
         self.includeMenus = includeMenus; self.includeApplications = includeApplications
         self.screenText = screenText
+        self.expectedProcessID = expectedProcessID
     }
+
+    /// When set, observation refuses every other frontmost app. E2E uses this so a
+    /// focus slip cannot snapshot the person's real windows.
+    private let expectedProcessID: Int32?
 
     public func observe() async throws -> VoiceControlSnapshot {
         guard AXIsProcessTrusted() else { throw NativeVoiceControlError.permission }
@@ -86,6 +94,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
                 return (app.processIdentifier, app.localizedName ?? "App", app.bundleIdentifier ?? "", running)
             }
             guard let (pid, name, bundle, running) = context else { last = .noWindow; continue }
+            if let expectedProcessID, pid != expectedProcessID { last = .windowChanged; continue }
             if excludedBundleIDs.contains(bundle) { throw NativeVoiceControlError.excluded }
             if pid == ProcessInfo.processInfo.processIdentifier { last = .excluded; continue }
             let app = AXUIElementCreateApplication(pid)
@@ -116,10 +125,7 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         let windowFrame = Self.frame(root)
         // Screen text is read on its own actor while the walk runs here, under
         // its own budget: a slow OCR pass never eats the Accessibility budget.
-        let screenTextTask: Task<[ScreenTextBlock], Never>? = {
-            guard let screenText, let windowFrame else { return nil }
-            return Task { await screenText.read(window: windowFrame, processID: pid) }
-        }()
+        let screenTextRead = screenTextTask(processID: pid, windowFrame: windowFrame)
         let walkStarted = ContinuousClock.now
         let walk = AXTreeWalk.run(
             roots: roots, source: LiveAXTreeSource(), display: display, window: windowFrame,
@@ -174,8 +180,15 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         var textSummary: [String] = []
         var screenTextBlocks = 0
         var screenTextTargets = 0
-        if let screenTextTask {
-            let blocks = await Self.awaiting(screenTextTask, budget: Self.screenTextBudget) ?? []
+        if let (token, screenTextTask) = screenTextRead {
+            let blocks: [ScreenTextBlock]
+            if let finished = await Self.awaiting(screenTextTask, budget: Self.screenTextBudget) {
+                blocks = finished
+                if pendingScreenText?.token == token { pendingScreenText = nil }
+            } else {
+                VisionScreenTextReader.note("observe: screen text still running after \(Self.screenTextBudget)")
+                blocks = []
+            }
             try Task.checkCancellation()
             screenTextBlocks = blocks.count
             let controls = pending.compactMap { item -> (label: String, frame: CGRect)? in
@@ -694,6 +707,18 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         "left": 123, "right": 124, "down": 125, "up": 126, "backspace": 51, "delete": 117,
     ]
     static let screenTextBudget: Duration = .milliseconds(1_200)
+
+    private func screenTextTask(processID pid: Int32, windowFrame: CGRect?) -> (UUID, Task<[ScreenTextBlock], Never>)? {
+        guard let screenText, let windowFrame else { return nil }
+        if let pending = pendingScreenText, pending.pid == pid, pending.frame == windowFrame, !pending.task.isCancelled {
+            return (pending.token, pending.task)
+        }
+        pendingScreenText?.task.cancel()
+        let token = UUID()
+        let task = Task { await screenText.read(window: windowFrame, processID: pid) }
+        pendingScreenText = (token, pid, windowFrame, task)
+        return (token, task)
+    }
     /// The task's value if it finishes within `budget`, else nil. The task keeps
     /// running so its result is cached for the next observation.
     static func awaiting<T: Sendable>(_ task: Task<T, Never>, budget: Duration) async -> T? {

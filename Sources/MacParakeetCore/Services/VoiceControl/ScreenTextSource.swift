@@ -54,21 +54,91 @@ public actor VisionScreenTextReader: ScreenTextReading {
     public static func requestScreenRecordingAccess() -> Bool { CGRequestScreenCaptureAccess() }
 
     public func read(window: CGRect, processID: Int32) async -> [ScreenTextBlock] {
-        guard Self.hasScreenRecordingAccess, ScreenTextMerge.validFrame(window),
-            await Self.foregroundPID() == processID,
-            let plan = Self.capturePlan(window: window, processID: processID),
-            let image = CGWindowListCreateImage(
-                .null, [.optionIncludingWindow], plan.windowID, [.bestResolution, .boundsIgnoreFraming]),
+        let started = ContinuousClock.now
+        guard Self.hasScreenRecordingAccess else {
+            Self.note("screen-text: no Screen Recording grant")
+            return []
+        }
+        guard ScreenTextMerge.validFrame(window) else {
+            Self.note("screen-text: invalid window \(Self.rect(window))")
+            return []
+        }
+        let front = await Self.foregroundPID()
+        guard front == processID else {
+            Self.note("screen-text: foreground \(front.map(String.init) ?? "none") != \(processID)")
+            return []
+        }
+        guard let plan = Self.capturePlan(window: window, processID: processID) else {
+            Self.note("screen-text: no unique window for pid \(processID) frame \(Self.rect(window)); \(Self.windowList(processID: processID))")
+            return []
+        }
+        guard let image = CGWindowListCreateImage(
+            .null, [.optionIncludingWindow], plan.windowID, [.bestResolution, .boundsIgnoreFraming]),
             image.width > 0, image.height > 0, image.width <= 12_000, image.height <= 12_000,
-            image.width * image.height <= 40_000_000,
-            let redacted = Self.redact(image, window: window, excluding: plan.exclusions)
-        else { return [] }
+            image.width * image.height <= 40_000_000
+        else {
+            Self.note("screen-text: capture failed for window \(plan.windowID)")
+            return []
+        }
+        guard let redacted = Self.redact(image, window: window, excluding: plan.exclusions) else {
+            Self.note("screen-text: redact failed exclusions=\(plan.exclusions.count)")
+            return []
+        }
         guard !Task.isCancelled, await Self.foregroundPID() == processID,
             Self.capturePlan(window: window, processID: processID) == plan
-        else { return [] }
-        return Self.recognize(redacted, window: window).filter { block in
+        else {
+            Self.note("screen-text: window changed during recognition")
+            return []
+        }
+        let blocks = Self.recognize(redacted, window: window).filter { block in
             !plan.exclusions.contains { $0.intersects(block.frame) }
         }
+        let elapsed = started.duration(to: .now)
+        let milliseconds = Int(elapsed.components.seconds) * 1000
+            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
+        Self.note(
+            "screen-text: \(blocks.count) blocks in \(milliseconds)ms window \(plan.windowID) exclusions \(plan.exclusions.count)"
+        )
+        return blocks
+    }
+
+    /// E2E only. Production stays quiet; the owned-fixture run needs the reason a read returned nothing.
+    static func note(_ message: String) {
+        guard ProcessInfo.processInfo.environment["MACPARAKEET_NATIVE_VOICE_CONTROL_E2E"] == "1" else { return }
+        let line = message + "\n"
+        let url = URL(fileURLWithPath: "/tmp/macparakeet-voice-control-e2e.log")
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            } else {
+                try? data.write(to: url)
+            }
+        }
+        print(message)
+    }
+
+    private static func rect(_ frame: CGRect) -> String {
+        "\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.width))x\(Int(frame.height))"
+    }
+
+    private static func windowList(processID: Int32) -> String {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]]
+        else { return "window list unavailable" }
+        let rows = list.compactMap { item -> String? in
+            guard (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == processID,
+                let id = (item[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                let bounds = item[kCGWindowBounds as String] as? [String: Any],
+                let x = (bounds["X"] as? NSNumber)?.intValue,
+                let y = (bounds["Y"] as? NSNumber)?.intValue,
+                let width = (bounds["Width"] as? NSNumber)?.intValue,
+                let height = (bounds["Height"] as? NSNumber)?.intValue
+            else { return nil }
+            return "#\(id) \(x),\(y) \(width)x\(height)"
+        }
+        return rows.isEmpty ? "no on-screen windows" : rows.joined(separator: "; ")
     }
 
     private static func foregroundPID() async -> Int32? {
