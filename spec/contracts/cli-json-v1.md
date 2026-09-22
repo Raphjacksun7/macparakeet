@@ -435,6 +435,10 @@ normalization, agent-facing meeting commands including durable transcript
 segments and additive artifact paths, command-level JSON failure envelopes, and
 `--json`/`--envelope` mutual exclusion.
 
+## Optional Orukeet model identity
+
+`models list` may include the additive `parakeet-orukeet` entry. Its engine is `parakeet` and variant is `orukeet`; it does not change the default v3 selection. `models download/select/delete parakeet-orukeet`, `config set parakeet-model orukeet`, and `transcribe --parakeet-model orukeet` address the independent preview cache. Transcription results attribute this model as `engineVariant: "orukeet"`, never `v3`.
+
 ## When this changes
 
 Update this file, `Sources/CLI/CHANGELOG.md`, `docs/cli-testing.md`,

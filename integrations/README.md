@@ -285,7 +285,12 @@ temporary when `--no-history` is set.
 
 Parakeet is the default local engine for compatibility with existing scripts:
 use v3 for English plus supported European languages, v2 for English timestamped
-transcripts, or Unified for readable English with word timestamps. Use Nemotron
+transcripts, or Unified for readable English with word timestamps. Orukeet is
+an optional Parakeet preview, not a separate engine. Download it with
+`models download parakeet-orukeet`, then use `models select parakeet-orukeet`
+or `transcribe --parakeet-model orukeet`. The default stays v3, and results
+from that build report `engineVariant` `orukeet`. It has no native streaming,
+tail-window preview, or recognition-time vocabulary boosting. Use Nemotron
 Beta when streaming preview matters, Whisper for broad-language
 files/media/retranscription, and Cohere only for local batch plain text with an
 explicit language.

@@ -331,7 +331,8 @@ Calendar-related code is implemented and **enabled** (`AppFeatures.calendarEnabl
 - [x] `SpeechEnginePreference`, `SpeechEngineSelection`, `ParakeetModelVariant`, and `NemotronModelVariant` persisted or modeled through `UserDefaults` where user-selectable
 - [x] Settings → Speech Recognition segmented engine picker plus Parakeet Model, Nemotron Beta, Cohere Language, and Whisper Language cards/controls
 - [x] Engine switching blocked while jobs are queued/running or a meeting speech-engine lease is active
-- [x] CLI `transcribe --engine parakeet|nemotron|whisper|cohere --language <code> --parakeet-model app-default|v3|v2|unified`, `config set parakeet-model`, `config set nemotron-language`, `config set cohere-language`, and `models download parakeet-v2|parakeet-v3|parakeet-unified|nemotron-multilingual-1120ms|nemotron-english-1120ms|cohere-transcribe|whisper-large-v3-v20240930-turbo-632MB`
+- [x] CLI `transcribe --engine parakeet|nemotron|whisper|cohere --language <code> --parakeet-model app-default|v3|v2|unified|orukeet`, `config set parakeet-model`, `config set nemotron-language`, `config set cohere-language`, and `models download parakeet-v2|parakeet-v3|parakeet-unified|parakeet-orukeet|nemotron-multilingual-1120ms|nemotron-english-1120ms|cohere-transcribe|whisper-large-v3-v20240930-turbo-632MB`
+- [x] Optional Orukeet preview as a Parakeet variant (`ParakeetModelVariant.orukeet`), not a fifth engine. Default remains v3. Own pinned Core ML cache, `engineVariant=orukeet`, no native streaming, tail preview, or custom vocabulary. Weights are CC BY-SA 4.0 and are not bundled.
 - [x] Meeting recordings capture the active engine/language at start and preserve it through metadata, lock files, crash recovery, and final transcription
 
 ### v0.6 Productized Transforms
