@@ -91,6 +91,14 @@ by checking exit code first: `2` = misuse, `1` = runtime, `0` = success.
 
 ### Added
 
+- `parakeet-model` accepts `orukeet`. `config set parakeet-model orukeet`,
+  `transcribe` / `retranscribe --parakeet-model orukeet`, and
+  `models download|select|delete parakeet-orukeet` address that preview.
+  `models list` may include the additive `parakeet-orukeet` entry (engine
+  `parakeet`, variant `orukeet`). The default remains `v3`. Transcription
+  results from this build report `engineVariant` `orukeet`. Native streaming,
+  tail-window dictation preview, and recognition-time vocabulary boosting stay
+  off.
 - Inline `--provider` accepts `moonshot` (aliases `kimi`, `moonshotai`),
   `deepseek`, `qwen` (aliases `alibaba`, `dashscope`), `zai` (aliases `zhipu`,
   `z.ai`, `glm`), and `minimax`. Default env keys are `MOONSHOT_API_KEY` /

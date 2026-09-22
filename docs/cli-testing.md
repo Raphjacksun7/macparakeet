@@ -130,10 +130,16 @@ the STT input.
 
 Parakeet remains the no-flag default for semver stability and ignores
 `--language`. Within Parakeet, v3 covers English plus supported European
-languages, v2 is the English timestamped build, and Unified is readable English
-with word timestamps. Use `--parakeet-model app-default|v3|v2|unified` for
-a single run, or `config set parakeet-model unified` /
-`models select parakeet-unified` to persist it.
+languages, v2 is the English timestamped build, Unified is readable English
+with word timestamps, and Orukeet is an optional multilingual preview that
+stays a Parakeet variant. Use
+`--parakeet-model app-default|v3|v2|unified|orukeet` for a single run, or
+`config set parakeet-model unified` / `models select parakeet-unified` to
+persist a build. Orukeet is explicit:
+`models download parakeet-orukeet`, then `config set parakeet-model orukeet`
+or `transcribe --parakeet-model orukeet`. It has no native streaming,
+tail-window preview, or recognition-time vocabulary boosting, and the default
+remains v3.
 Use `--engine app-default` when you want the CLI to follow the GUI's saved
 speech engine, Parakeet model, and Nemotron/Cohere/Whisper language defaults.
 Nemotron is an opt-in Beta engine with two builds: the multilingual build
@@ -331,6 +337,8 @@ swift run macparakeet-cli models list
 swift run macparakeet-cli models list --json
 swift run macparakeet-cli models select parakeet-v3
 swift run macparakeet-cli models select parakeet-v2
+swift run macparakeet-cli models download parakeet-orukeet
+swift run macparakeet-cli models select parakeet-orukeet
 swift run macparakeet-cli models download parakeet-v2
 swift run macparakeet-cli models download nemotron-multilingual-1120ms
 swift run macparakeet-cli models select nemotron-multilingual-1120ms
@@ -341,8 +349,9 @@ swift run macparakeet-cli models select cohere-transcribe
 swift run macparakeet-cli models select whisper-large-v3-v20240930-turbo-632MB
 ```
 
-`models list` reports the selectable speech engines MacParakeet exposes today:
-Parakeet v3, Parakeet v2, the two Nemotron Beta builds (multilingual and
+`models list` reports the selectable speech models MacParakeet exposes today:
+Parakeet v3, Parakeet v2, Parakeet Unified, the optional Orukeet preview
+(`parakeet-orukeet`), the two Nemotron Beta builds (multilingual and
 English-only), Cohere Transcribe, and the configured WhisperKit variant.
 `models select` writes
 the same shared default used by the GUI and `transcribe --engine app-default`;
@@ -523,6 +532,7 @@ swift run macparakeet-cli models status
 # Explicit Parakeet / Nemotron / Cohere / Whisper downloads
 swift run macparakeet-cli models download parakeet-v3
 swift run macparakeet-cli models download parakeet-v2
+swift run macparakeet-cli models download parakeet-orukeet
 swift run macparakeet-cli models download nemotron-multilingual-1120ms
 swift run macparakeet-cli models download cohere-transcribe
 swift run macparakeet-cli models download whisper-large-v3-v20240930-turbo-632MB
