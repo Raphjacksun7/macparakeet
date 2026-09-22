@@ -470,6 +470,11 @@ final class VoiceControlCoordinator {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, ensureSession() else { return }
         if !Self.admitsLiveGrammar(dryRun: dryRun) {
+            // A proposal must not stop the turn, answer a pending question, or
+            // revise the live goal. Those entry points ignore the dry-run flag.
+            if runner?.hasLiveWork == true || model.conversation.expectedResponse != nil {
+                return
+            }
             dispatch(text, dryRun: true)
             return
         }
@@ -556,7 +561,7 @@ final class VoiceControlCoordinator {
     ) {
         let submission = submissions.begin()
         let correction =
-            !asLiteralPayload
+            !dryRun && !asLiteralPayload
             && (asRevision || (!model.goal.isEmpty && VoiceControlConversationState.isCorrection(text)))
         if !correction && model.conversation.expectedResponse != .clarification {
             model.goal = text; model.steps = []
@@ -568,7 +573,7 @@ final class VoiceControlCoordinator {
         }
         runner?.stop()
         guard let runner else { return }
-        let clarification = !asLiteralPayload && model.conversation.takeClarification()
+        let clarification = !dryRun && !asLiteralPayload && model.conversation.takeClarification()
         let needsSnapshot = !speechSubmission && !skipInvocationSnapshot
         skipInvocationSnapshot = false
         let snapshotTask = invocationSnapshotTask

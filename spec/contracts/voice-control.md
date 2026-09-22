@@ -233,7 +233,8 @@ Retention is the last 20 sessions. A pointer copy is also written to
 `/tmp/macparakeet-voice-control/latest.md` with owner-only permissions. That
 pointer is not a command inbox. `command.json` is read only from the Voice
 Control log directory. A dry run is a fresh proposal: it cannot activate an
-app, confirm, stop, or enter literal mode. The experimental panel exposes the
+app, confirm, stop, enter literal mode, or replace an in-progress turn, a
+pending confirmation, or an unanswered clarification. The experimental panel exposes the
 log path with Refresh, Open folder, Copy log path, and Copy diagnostics. Copy
 diagnostics still omits the instruction and labels.
 

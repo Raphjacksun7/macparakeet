@@ -87,11 +87,19 @@ public actor VisionScreenTextReader: ScreenTextReading {
         guard !Task.isCancelled, await Self.foregroundPID() == processID,
             Self.capturePlan(window: window, processID: processID) == plan
         else {
-            Self.note("screen-text: window changed during recognition")
+            Self.note("screen-text: window changed before recognition")
             return []
         }
         let blocks = Self.recognize(redacted, window: window).filter { block in
             !plan.exclusions.contains { $0.intersects(block.frame) }
+        }
+        // Recognition is the slow part. A window that moved while Vision ran
+        // must not contribute targets from the image captured at the start.
+        guard !Task.isCancelled, await Self.foregroundPID() == processID,
+            Self.capturePlan(window: window, processID: processID) == plan
+        else {
+            Self.note("screen-text: window changed during recognition")
+            return []
         }
         let elapsed = started.duration(to: .now)
         let milliseconds = Int(elapsed.components.seconds) * 1000

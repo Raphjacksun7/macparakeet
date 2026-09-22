@@ -49,6 +49,20 @@ final class VoiceControlTraceStoreTests: XCTestCase {
                 root.path))
     }
 
+    func testPointerSkipsASymlinkDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voice-control-logs-\(UUID().uuidString)", isDirectory: true)
+        let real = root.appendingPathComponent("real", isDirectory: true)
+        let link = root.appendingPathComponent("link")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        let store = VoiceControlTraceStore(
+            directory: root.appendingPathComponent("logs"), pointerDirectory: link, retention: 2)
+        await store.beginTask(id: UUID(), instruction: "Synthetic instruction")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: real.appendingPathComponent("latest.json").path))
+    }
+
     func testRetentionKeepsOnlyRecentSessions() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("voice-control-logs-\(UUID().uuidString)", isDirectory: true)

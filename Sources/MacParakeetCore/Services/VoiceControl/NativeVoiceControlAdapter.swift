@@ -20,6 +20,17 @@ public enum NativeVoiceControlError: Error, LocalizedError, Sendable, Equatable 
 
 /// Actual AX handles never leave this actor. An ID belongs to exactly one snapshot.
 /// Synchronous AX IPC uses a short messaging timeout and never runs on MainActor.
+private final class AwaitGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
+    }
+}
+
 public actor NativeVoiceControlAdapter: VoiceControlAdapter {
     private struct Element: @unchecked Sendable { let value: AXUIElement }
     private struct BoundTarget {
@@ -303,6 +314,9 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         authority: ActionAuthority
     ) async throws -> VoiceControlReceipt {
         try authority.check()
+        // Pixels from before this effect must not become the next observation's targets.
+        pendingScreenText?.task.cancel()
+        pendingScreenText = nil
         guard current?.id == snapshot.id, observedAt.duration(to: .now) < .seconds(20) else {
             throw NativeVoiceControlError.observationExpired
         }
@@ -719,15 +733,19 @@ public actor NativeVoiceControlAdapter: VoiceControlAdapter {
         pendingScreenText = (token, pid, windowFrame, task)
         return (token, task)
     }
-    /// The task's value if it finishes within `budget`, else nil. The task keeps
-    /// running so its result is cached for the next observation.
+    /// The task's value if it finishes within `budget`, else nil. Returning does
+    /// not cancel `task`: a slow read can still complete for the next observation.
     static func awaiting<T: Sendable>(_ task: Task<T, Never>, budget: Duration) async -> T? {
-        await withTaskGroup(of: T?.self) { group in
-            group.addTask { await task.value }
-            group.addTask { try? await Task.sleep(for: budget); return nil }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        await withCheckedContinuation { continuation in
+            let gate = AwaitGate()
+            Task {
+                let value = await task.value
+                if gate.claim() { continuation.resume(returning: value) }
+            }
+            Task {
+                try? await Task.sleep(for: budget)
+                if gate.claim() { continuation.resume(returning: nil) }
+            }
         }
     }
 
