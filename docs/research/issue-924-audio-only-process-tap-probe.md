@@ -37,7 +37,10 @@ deleting or reusing earlier evidence. Validation uses macOS's built-in
 `plutil` and `awk`, so `jq` is not required. On deadline, the runner first
 terminates the probe's `afplay` child and gives the Swift process a bounded
 window to execute checked teardown before escalating process termination. A
-timed-out run never retains a PASS result. A result from one machine is
+deadline or SIGINT/SIGTERM always leaves canonical `result.json` with
+`status: FAIL`; any result written after the runner's boundary is retained
+separately for diagnosis and cannot masquerade as the run outcome. A result
+from one machine is
 `SAFE-TO-TEST` evidence only. Product integration still requires maintainer
 agreement, permission UX design, fallback policy, device/route coverage, and
 reproduction of the previously documented VPIO conflict boundary.
@@ -86,7 +89,7 @@ success, not a claim about which consent UI the user saw.
 The probe then completed 20 tap/aggregate create, capture, stop, and destroy
 cycles in one process on the same physical host. All 20 cycles captured the
 997 Hz tone and retained the same 48 kHz, stereo Float32 format and
-`BuiltInSpeakerDevice` clock source:
+`BuiltInSpeakerDevice` observed as the default playback-output UID:
 
 | Cycles | Failed | Total frames | Frames/cycle min–max | Minimum RMS | Minimum 997 Hz amplitude |
 | ---: | ---: | ---: | ---: | ---: | ---: |

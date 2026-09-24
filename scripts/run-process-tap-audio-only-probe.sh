@@ -26,6 +26,8 @@ managed_outputs=(
   "$output_dir/stdout.txt"
   "$output_dir/stderr.txt"
   "$output_dir/deadline.txt"
+  "$output_dir/result-after-deadline.json"
+  "$output_dir/result-after-signal.json"
 )
 for managed_output in "${managed_outputs[@]}"; do
   if [[ -e "$managed_output" ]]; then
@@ -55,11 +57,42 @@ codesign --force --sign - \
   codesign -dv --verbose=4 "$binary" 2>&1
 } >"$output_dir/environment.txt" 2>&1
 
-set +e
 probe_pid=""
 
 probe_children() {
   /usr/bin/pgrep -P "$probe_pid" 2>/dev/null || true
+}
+
+probe_audio_players() {
+  local player_pid
+  local player_command
+  while IFS= read -r player_pid; do
+    [[ -n "$player_pid" ]] || continue
+    player_command=$(/bin/ps -p "$player_pid" -o command= 2>/dev/null || true)
+    if [[ "$player_command" == "/usr/bin/afplay $tone" ]]; then
+      echo "$player_pid"
+    fi
+  done < <(/usr/bin/pgrep -x afplay 2>/dev/null || true)
+}
+
+terminate_processes() {
+  local process_pid
+  while IFS= read -r process_pid; do
+    [[ -n "$process_pid" ]] && kill -TERM "$process_pid" 2>/dev/null || true
+  done
+}
+
+stop_probe_audio_players() {
+  local remaining_players
+  terminate_processes < <(probe_audio_players)
+  for _ in {1..20}; do
+    remaining_players=$(probe_audio_players)
+    [[ -z "$remaining_players" ]] && return 0
+    sleep 0.1
+  done
+  while IFS= read -r player_pid; do
+    [[ -n "$player_pid" ]] && kill -KILL "$player_pid" 2>/dev/null || true
+  done <<<"$remaining_players"
 }
 
 wait_for_probe_exit() {
@@ -73,16 +106,21 @@ wait_for_probe_exit() {
 }
 
 stop_probe_tree() {
-  [[ -n "$probe_pid" ]] || return 0
-  kill -0 "$probe_pid" 2>/dev/null || return 0
+  [[ -n "$probe_pid" ]] || {
+    stop_probe_audio_players
+    return 0
+  }
+  if ! kill -0 "$probe_pid" 2>/dev/null; then
+    stop_probe_audio_players
+    return 0
+  fi
 
-  local child_pid
-  while IFS= read -r child_pid; do
-    [[ -n "$child_pid" ]] && kill -TERM "$child_pid" 2>/dev/null || true
-  done < <(probe_children)
+  terminate_processes < <(probe_children)
+  stop_probe_audio_players
 
   if wait_for_probe_exit 20; then
     wait "$probe_pid" 2>/dev/null || true
+    stop_probe_audio_players
     return 0
   fi
 
@@ -91,9 +129,52 @@ stop_probe_tree() {
     kill -KILL "$probe_pid" 2>/dev/null || true
   fi
   wait "$probe_pid" 2>/dev/null || true
+  stop_probe_audio_players
 }
 
-trap stop_probe_tree EXIT INT TERM
+write_runner_failure_result() {
+  local failure_type=$1
+  local raw_result=$2
+  local message=$3
+  local runner_exit_code=$4
+  local raw_result_preserved=NO
+
+  if [[ -e "$result" ]]; then
+    mv "$result" "$raw_result"
+    raw_result_preserved=YES
+  fi
+
+  /usr/bin/plutil -create xml1 "$result"
+  /usr/bin/plutil -insert schemaVersion -integer 2 "$result"
+  /usr/bin/plutil -insert status -string FAIL "$result"
+  /usr/bin/plutil -insert failureType -string "$failure_type" "$result"
+  /usr/bin/plutil -insert error -string "$message" "$result"
+  /usr/bin/plutil -insert runnerExitCode -integer "$runner_exit_code" "$result"
+  /usr/bin/plutil -insert requestedCycles -integer "$cycles" "$result"
+  /usr/bin/plutil -insert deadlineSeconds -integer "$deadline_seconds" "$result"
+  /usr/bin/plutil -insert microphoneRequested -bool NO "$result"
+  /usr/bin/plutil -insert screenPixelsRequested -bool NO "$result"
+  /usr/bin/plutil -insert rawResultPreserved -bool "$raw_result_preserved" "$result"
+  /usr/bin/plutil -convert json "$result"
+}
+
+handle_signal() {
+  local signal_name=$1
+  local runner_exit_code=$2
+  trap - EXIT INT TERM
+  stop_probe_tree
+  probe_pid=""
+  write_runner_failure_result \
+    "cancelled_by_${signal_name}" \
+    "$output_dir/result-after-signal.json" \
+    "process-tap probe runner received ${signal_name}" \
+    "$runner_exit_code"
+  exit "$runner_exit_code"
+}
+
+trap stop_probe_tree EXIT
+trap 'handle_signal SIGINT 130' INT
+trap 'handle_signal SIGTERM 143' TERM
 
 "$binary" \
   --output "$result" \
@@ -109,14 +190,21 @@ while kill -0 "$probe_pid" 2>/dev/null; do
     echo "process-tap probe exceeded ${deadline_seconds}-second deadline" >"$output_dir/deadline.txt"
     stop_probe_tree
     probe_pid=""
+    write_runner_failure_result \
+      deadline_exceeded \
+      "$output_dir/result-after-deadline.json" \
+      "process-tap probe exceeded ${deadline_seconds}-second deadline" \
+      124
     exit 124
   fi
   sleep 0.1
 done
-wait "$probe_pid"
-probe_status=$?
+if wait "$probe_pid"; then
+  probe_status=0
+else
+  probe_status=$?
+fi
 probe_pid=""
-set -e
 
 test -s "$result"
 /usr/bin/plutil -convert xml1 -o /dev/null "$result"
