@@ -37,10 +37,12 @@ deleting or reusing earlier evidence. Validation uses macOS's built-in
 `plutil` and `awk`, so `jq` is not required. On deadline, the runner first
 terminates the probe's `afplay` child and gives the Swift process a bounded
 window to execute checked teardown before escalating process termination. A
-deadline or SIGINT/SIGTERM always leaves canonical `result.json` with
-`status: FAIL`; any result written after the runner's boundary is retained
-separately for diagnosis and cannot masquerade as the run outcome. A result
-from one machine is
+deadline or SIGINT/SIGTERM after probe launch always leaves canonical
+`result.json` with `status: FAIL`; any result written after the runner's
+boundary is retained separately for diagnosis and cannot masquerade as the run
+outcome. An interruption during compilation, signing, or environment capture
+cannot leave a PASS result and requires a fresh output directory. A result from
+one machine is
 `SAFE-TO-TEST` evidence only. Product integration still requires maintainer
 agreement, permission UX design, fallback policy, device/route coverage, and
 reproduction of the previously documented VPIO conflict boundary.

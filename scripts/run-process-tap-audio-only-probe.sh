@@ -30,7 +30,7 @@ managed_outputs=(
   "$output_dir/result-after-signal.json"
 )
 for managed_output in "${managed_outputs[@]}"; do
-  if [[ -e "$managed_output" ]]; then
+  if [[ -e "$managed_output" || -L "$managed_output" ]]; then
     echo "output directory already contains probe artifact: $managed_output" >&2
     echo "use a fresh output directory so a failed run cannot retain prior PASS data" >&2
     exit 73
