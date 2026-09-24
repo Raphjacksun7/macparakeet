@@ -10,7 +10,8 @@ versions and output devices.
 
 The probe:
 
-- creates a global Core Audio process tap and private aggregate device;
+- creates a global Core Audio process tap and a tap-only private aggregate
+  device, without a physical input or output subdevice;
 - requests neither microphone input nor screen pixels;
 - plays a generated 997 Hz stereo WAV through `/usr/bin/afplay`;
 - records callback count, captured frames, RMS, peak, and 997 Hz amplitude;

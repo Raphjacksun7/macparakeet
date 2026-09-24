@@ -56,9 +56,9 @@ private func requireNoError(_ status: OSStatus, stage: String) throws {
     }
 }
 
-private func defaultSystemOutputDevice() throws -> AudioDeviceID {
+private func defaultOutputDevice() throws -> AudioDeviceID {
     var address = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )
@@ -66,7 +66,7 @@ private func defaultSystemOutputDevice() throws -> AudioDeviceID {
     var size = UInt32(MemoryLayout<AudioDeviceID>.size)
     try requireNoError(
         AudioObjectGetPropertyData(systemAudioObject, &address, 0, nil, &size, &deviceID),
-        stage: "read default system output"
+        stage: "read default playback output"
     )
     return deviceID
 }
@@ -82,7 +82,7 @@ private func deviceUID(_ deviceID: AudioDeviceID) throws -> String {
     let status = withUnsafeMutablePointer(to: &uid) { pointer in
         AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, pointer)
     }
-    try requireNoError(status, stage: "read default system output UID")
+    try requireNoError(status, stage: "read default playback output UID")
     return uid as String
 }
 
@@ -205,19 +205,15 @@ private final class AudioOnlyProcessTapProbe: @unchecked Sendable {
             throw ProbeError.unsupportedFormat(format)
         }
 
-        let outputDevice = try defaultSystemOutputDevice()
+        let outputDevice = try defaultOutputDevice()
         outputUID = try deviceUID(outputDevice)
         let aggregateUID = "com.macparakeet.process-tap-probe.\(UUID().uuidString)"
         let aggregateDescription: [String: Any] = [
             kAudioAggregateDeviceNameKey: "MacParakeet Audio-Only Tap Probe",
             kAudioAggregateDeviceUIDKey: aggregateUID,
-            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
             kAudioAggregateDeviceTapAutoStartKey: true,
-            kAudioAggregateDeviceSubDeviceListKey: [
-                [kAudioSubDeviceUIDKey: outputUID]
-            ],
             kAudioAggregateDeviceTapListKey: [
                 [
                     kAudioSubTapDriftCompensationKey: true,
