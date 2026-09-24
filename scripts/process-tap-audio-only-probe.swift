@@ -11,6 +11,8 @@ private enum ProbeError: Error, CustomStringConvertible {
     case unsupportedFormat(AudioStreamBasicDescription)
     case noFrames
     case signalTooQuiet(rms: Double, targetAmplitude: Double)
+    case cycleFailed(cycle: Int, reason: String)
+    case teardownFailed([String])
 
     var description: String {
         switch self {
@@ -28,6 +30,10 @@ private enum ProbeError: Error, CustomStringConvertible {
             return "the process tap delivered no audio frames"
         case let .signalTooQuiet(rms, targetAmplitude):
             return "captured signal did not contain the expected tone: rms=\(rms) target_amplitude=\(targetAmplitude)"
+        case let .cycleFailed(cycle, reason):
+            return "cycle \(cycle) failed: \(reason)"
+        case let .teardownFailed(failures):
+            return "process tap teardown failed: \(failures.joined(separator: "; "))"
         }
     }
 }
@@ -96,8 +102,6 @@ private func tapFormat(_ tapID: AudioObjectID) throws -> AudioStreamBasicDescrip
 }
 
 private final class SignalAccumulator: @unchecked Sendable {
-    let sampleRate: Double
-    let targetFrequency: Double
     private(set) var callbacks: UInt64 = 0
     private(set) var frames: UInt64 = 0
     private(set) var analyzedSamples: UInt64 = 0
@@ -105,10 +109,15 @@ private final class SignalAccumulator: @unchecked Sendable {
     private(set) var peak = 0.0
     private(set) var targetReal = 0.0
     private(set) var targetImaginary = 0.0
+    private let oscillatorStepReal: Double
+    private let oscillatorStepImaginary: Double
+    private var oscillatorReal = 1.0
+    private var oscillatorImaginary = 0.0
 
     init(sampleRate: Double, targetFrequency: Double) {
-        self.sampleRate = sampleRate
-        self.targetFrequency = targetFrequency
+        let radiansPerFrame = 2.0 * Double.pi * targetFrequency / sampleRate
+        oscillatorStepReal = cos(radiansPerFrame)
+        oscillatorStepImaginary = -sin(radiansPerFrame)
     }
 
     // Called only on the serial Core Audio IO queue. No locks, logging, file IO,
@@ -129,7 +138,6 @@ private final class SignalAccumulator: @unchecked Sendable {
         guard frameCount > 0 else { return }
 
         let samples = data.assumingMemoryBound(to: Float.self)
-        let startFrame = frames
         callbacks += 1
         frames += UInt64(frameCount)
         analyzedSamples += UInt64(frameCount)
@@ -141,11 +149,16 @@ private final class SignalAccumulator: @unchecked Sendable {
             sumSquares += sample * sample
             if absolute > peak { peak = absolute }
 
-            let phase =
-                2.0 * Double.pi * targetFrequency
-                * Double(startFrame + UInt64(frame)) / sampleRate
-            targetReal += sample * cos(phase)
-            targetImaginary -= sample * sin(phase)
+            targetReal += sample * oscillatorReal
+            targetImaginary += sample * oscillatorImaginary
+
+            let nextReal =
+                oscillatorReal * oscillatorStepReal
+                - oscillatorImaginary * oscillatorStepImaginary
+            oscillatorImaginary =
+                oscillatorReal * oscillatorStepImaginary
+                + oscillatorImaginary * oscillatorStepReal
+            oscillatorReal = nextReal
         }
     }
 
@@ -243,20 +256,59 @@ private final class AudioOnlyProcessTapProbe: @unchecked Sendable {
         )
     }
 
-    func stop() {
+    func stop() throws {
+        var failures: [String] = []
         if aggregateDeviceID != unknownAudioObject, let ioProcID {
-            AudioDeviceStop(aggregateDeviceID, ioProcID)
-            AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
-            self.ioProcID = nil
+            let stopStatus = AudioDeviceStop(aggregateDeviceID, ioProcID)
+            if stopStatus != noErr {
+                failures.append(
+                    ProbeError.osStatus(
+                        stage: "stop process tap IO",
+                        status: stopStatus
+                    ).description
+                )
+            }
+            let destroyIOStatus = AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
+            if destroyIOStatus == noErr {
+                self.ioProcID = nil
+            } else {
+                failures.append(
+                    ProbeError.osStatus(
+                        stage: "destroy process tap IO callback",
+                        status: destroyIOStatus
+                    ).description
+                )
+            }
             ioQueue.sync {}
         }
         if aggregateDeviceID != unknownAudioObject {
-            AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
-            aggregateDeviceID = unknownAudioObject
+            let status = AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
+            if status == noErr {
+                aggregateDeviceID = unknownAudioObject
+            } else {
+                failures.append(
+                    ProbeError.osStatus(
+                        stage: "destroy private aggregate tap device",
+                        status: status
+                    ).description
+                )
+            }
         }
         if tapID != unknownAudioObject {
-            AudioHardwareDestroyProcessTap(tapID)
-            tapID = unknownAudioObject
+            let status = AudioHardwareDestroyProcessTap(tapID)
+            if status == noErr {
+                tapID = unknownAudioObject
+            } else {
+                failures.append(
+                    ProbeError.osStatus(
+                        stage: "destroy audio-only process tap",
+                        status: status
+                    ).description
+                )
+            }
+        }
+        if !failures.isEmpty {
+            throw ProbeError.teardownFailed(failures)
         }
     }
 
@@ -386,6 +438,15 @@ private enum Main {
             "captureAPI": "CoreAudio AudioHardwareCreateProcessTap",
         ]
 
+        var cycleResults: [[String: Any]] = []
+        var activeCycle: Int?
+        var totalCallbacks: UInt64 = 0
+        var totalFrames: UInt64 = 0
+        var totalAnalyzedSamples: UInt64 = 0
+        var minimumRMS = Double.greatestFiniteMagnitude
+        var minimumTargetAmplitude = Double.greatestFiniteMagnitude
+        var maximumPeak = 0.0
+
         do {
             try writeDeterministicTone(
                 to: arguments.tone,
@@ -393,16 +454,10 @@ private enum Main {
                 frequency: targetFrequency
             )
 
-            var cycleResults: [[String: Any]] = []
-            var totalCallbacks: UInt64 = 0
-            var totalFrames: UInt64 = 0
-            var totalAnalyzedSamples: UInt64 = 0
-            var minimumRMS = Double.greatestFiniteMagnitude
-            var minimumTargetAmplitude = Double.greatestFiniteMagnitude
-            var maximumPeak = 0.0
-
             for cycle in 1...arguments.cycles {
+                activeCycle = cycle
                 let probe = AudioOnlyProcessTapProbe()
+                var captureFailure: Error?
                 do {
                     try probe.start(targetFrequency: targetFrequency)
                     Thread.sleep(forTimeInterval: 0.25)
@@ -419,19 +474,36 @@ private enum Main {
                         )
                     }
                     Thread.sleep(forTimeInterval: 0.25)
-                    probe.stop()
                 } catch {
-                    probe.stop()
-                    throw error
+                    captureFailure = error
+                }
+
+                do {
+                    try probe.stop()
+                } catch {
+                    let reason = captureFailure.map { "\($0); \(error)" } ?? String(describing: error)
+                    throw ProbeError.cycleFailed(cycle: cycle, reason: reason)
+                }
+                if let captureFailure {
+                    throw ProbeError.cycleFailed(
+                        cycle: cycle,
+                        reason: String(describing: captureFailure)
+                    )
                 }
 
                 guard let metrics = probe.accumulator, metrics.frames > 0 else {
-                    throw ProbeError.noFrames
+                    throw ProbeError.cycleFailed(
+                        cycle: cycle,
+                        reason: ProbeError.noFrames.description
+                    )
                 }
                 guard metrics.rms >= 0.005, metrics.targetAmplitude >= 0.005 else {
-                    throw ProbeError.signalTooQuiet(
-                        rms: metrics.rms,
-                        targetAmplitude: metrics.targetAmplitude
+                    throw ProbeError.cycleFailed(
+                        cycle: cycle,
+                        reason: ProbeError.signalTooQuiet(
+                            rms: metrics.rms,
+                            targetAmplitude: metrics.targetAmplitude
+                        ).description
                     )
                 }
 
@@ -448,6 +520,7 @@ private enum Main {
                     "rms": metrics.rms,
                     "peak": metrics.peak,
                     "targetAmplitude": metrics.targetAmplitude,
+                    "teardownVerified": true,
                 ])
                 totalCallbacks += metrics.callbacks
                 totalFrames += metrics.frames
@@ -455,6 +528,7 @@ private enum Main {
                 minimumRMS = min(minimumRMS, metrics.rms)
                 minimumTargetAmplitude = min(minimumTargetAmplitude, metrics.targetAmplitude)
                 maximumPeak = max(maximumPeak, metrics.peak)
+                activeCycle = nil
             }
 
             result.merge([
@@ -472,11 +546,23 @@ private enum Main {
             try writeResult(result, to: arguments.output)
             print(arguments.output.path)
         } catch {
-            result.merge([
+            var failureResult: [String: Any] = [
                 "status": "FAIL",
                 "permissionOutcome": "unknown_or_denied",
                 "error": String(describing: error),
-            ]) { _, new in new }
+                "completedCycles": cycleResults.count,
+                "callbacks": totalCallbacks,
+                "capturedFrames": totalFrames,
+                "analyzedSamples": totalAnalyzedSamples,
+                "minimumCycleRMS": cycleResults.isEmpty ? 0 : minimumRMS,
+                "peak": maximumPeak,
+                "minimumCycleTargetAmplitude": cycleResults.isEmpty ? 0 : minimumTargetAmplitude,
+                "cycles": cycleResults,
+            ]
+            if let activeCycle {
+                failureResult["failedCycle"] = activeCycle
+            }
+            result.merge(failureResult) { _, new in new }
             try? writeResult(result, to: arguments.output)
             FileHandle.standardError.write(Data("\(error)\n".utf8))
             Foundation.exit(1)

@@ -14,9 +14,13 @@ The probe:
 - requests neither microphone input nor screen pixels;
 - plays a generated 997 Hz stereo WAV through `/usr/bin/afplay`;
 - records callback count, captured frames, RMS, peak, and 997 Hz amplitude;
-- removes the IO callback, aggregate device, and process tap on every exit;
+- performs target-frequency analysis with a fixed oscillator recurrence rather
+  than per-sample trigonometric calls on the Core Audio callback queue;
+- checks removal of the IO callback, aggregate device, and process tap before
+  accepting each lifecycle cycle;
 - exits nonzero if tap creation fails, no frames arrive, or the measured signal
-  does not clear the declared 0.005 RMS and target-amplitude floors.
+  does not clear the declared 0.005 RMS and target-amplitude floors;
+- retains completed-cycle measurements and the failing cycle in failure JSON.
 
 Run from the repository root:
 
@@ -26,8 +30,14 @@ scripts/run-process-tap-audio-only-probe.sh /absolute/output/directory
 
 The runner compiles an ad-hoc-signed probe with a stable identifier and writes
 `environment.txt`, `result.json`, stdout/stderr, the probe binary, and the
-generated WAV into the supplied evidence directory. A result from one machine
-is `SAFE-TO-TEST` evidence only. Product integration still requires maintainer
+generated WAV into the supplied evidence directory. The directory must not
+already contain any of those managed files; the runner fails instead of
+deleting or reusing earlier evidence. Validation uses macOS's built-in
+`plutil` and `awk`, so `jq` is not required. On deadline, the runner first
+terminates the probe's `afplay` child and gives the Swift process a bounded
+window to execute checked teardown before escalating process termination. A
+timed-out run never retains a PASS result. A result from one machine is
+`SAFE-TO-TEST` evidence only. Product integration still requires maintainer
 agreement, permission UX design, fallback policy, device/route coverage, and
 reproduction of the previously documented VPIO conflict boundary.
 
@@ -42,7 +52,9 @@ scripts/run-process-tap-audio-only-probe.sh /absolute/output/directory
 ```
 
 `result.json` retains per-cycle format and signal measurements and requires
-every requested cycle to capture the generated tone above the declared floors.
+every requested cycle to capture the generated tone above the declared floors
+and complete checked teardown. A failed later cycle keeps all earlier cycle
+measurements and names the failing cycle.
 
 ## 2026-09-16 result
 
