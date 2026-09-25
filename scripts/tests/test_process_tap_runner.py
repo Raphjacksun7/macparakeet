@@ -22,9 +22,6 @@ import Darwin
         let env = ProcessInfo.processInfo.environment
         try String(getpid()).write(to: output.deletingLastPathComponent().appendingPathComponent("probe.pid"),
                                    atomically: true, encoding: .utf8)
-        if env["FIXTURE_MODE"] == "crash" {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { _exit(1) }
-        }
         do {
             try playProbeTone(at: tone, executable: env["FIXTURE_PLAYER"]!)
         } catch { exit(1) }
@@ -48,8 +45,11 @@ class RunnerTests(unittest.TestCase):
         # A silent stand-in with the same process name and argv as afplay. This
         # reproduces filename-based cleanup without touching audio hardware.
         subprocess.run(['cc', '-x', 'c', '-', '-o', str(cls.player)],
-                       input='#include <unistd.h>\n#include <stdlib.h>\n#include <string.h>\n'
-                             'int main(void) { const char *m = getenv("FIXTURE_MODE"); '
+                       input='#include <unistd.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdio.h>\n'
+                             'int main(void) { const char *p = getenv("FIXTURE_CHILD_PID"); '
+                             'if (p) { FILE *f = fopen(p, "w"); if (!f) return 2; '
+                             'fprintf(f, "%d\\n", getpid()); fclose(f); } '
+                             'const char *m = getenv("FIXTURE_MODE"); '
                              'if (m && !strcmp(m, "pass")) usleep(300000); else sleep(60); return 0; }\n',
                        text=True, check=True)
 
@@ -81,7 +81,8 @@ class RunnerTests(unittest.TestCase):
             path.write_text(body)
             path.chmod(0o755)
         self.env = dict(os.environ, PATH=str(bindir) + ':' + os.environ['PATH'],
-                        FIXTURE_PROBE=str(self.fixture), FIXTURE_PLAYER=str(self.player), FIXTURE_MODE='pass')
+                        FIXTURE_PROBE=str(self.fixture), FIXTURE_PLAYER=str(self.player), FIXTURE_MODE='pass',
+                        FIXTURE_CHILD_PID=str(self.output / 'child.pid'))
         self.unrelated = subprocess.Popen(
             ['/usr/bin/afplay', str(self.output / 'generated-997hz.wav')], executable=str(self.player))
         self.runner = None
@@ -100,13 +101,10 @@ class RunnerTests(unittest.TestCase):
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def await_child(self):
-        path = self.output / 'probe.pid'
+        path = self.output / 'child.pid'
         for _ in range(100):
-            if path.exists() and path.read_text():
-                children = subprocess.run(['/usr/bin/pgrep', '-P', path.read_text()],
-                                          capture_output=True, text=True).stdout.split()
-                if children:
-                    return int(children[0])
+            if path.exists() and path.read_text().strip():
+                return int(path.read_text())
             time.sleep(0.05)
         self.fail('fixture never launched child')
 
@@ -145,6 +143,7 @@ class RunnerTests(unittest.TestCase):
     def test_crashed_probe_orphan(self):
         self.launch('crash')
         child = self.await_child()
+        os.kill(int((self.output / 'probe.pid').read_text()), signal.SIGKILL)
         self.assertNotEqual(self.runner.wait(timeout=15), 0)
         self.assert_cleanup(child)
 
