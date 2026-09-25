@@ -1,5 +1,6 @@
 import AudioToolbox
 import CoreAudio
+import Darwin
 import Foundation
 
 private let unknownAudioObject = kAudioObjectUnknown
@@ -412,6 +413,12 @@ private func writeResult(_ result: [String: Any], to output: URL) throws {
 @main
 private enum Main {
     static func main() {
+        // Give the runner an ownership boundary that survives an unexpected
+        // probe exit. Every afplay child inherits this private process group.
+        guard setpgid(0, 0) == 0 else {
+            perror("create probe process group")
+            Foundation.exit(1)
+        }
         let targetFrequency = 997.0
         let startedAt = ISO8601DateFormatter().string(from: Date())
         let arguments: Arguments

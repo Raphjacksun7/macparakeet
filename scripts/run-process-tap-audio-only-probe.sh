@@ -63,36 +63,11 @@ probe_children() {
   /usr/bin/pgrep -P "$probe_pid" 2>/dev/null || true
 }
 
-probe_audio_players() {
-  local player_pid
-  local player_command
-  while IFS= read -r player_pid; do
-    [[ -n "$player_pid" ]] || continue
-    player_command=$(/bin/ps -p "$player_pid" -o command= 2>/dev/null || true)
-    if [[ "$player_command" == "/usr/bin/afplay $tone" ]]; then
-      echo "$player_pid"
-    fi
-  done < <(/usr/bin/pgrep -x afplay 2>/dev/null || true)
-}
-
 terminate_processes() {
   local process_pid
   while IFS= read -r process_pid; do
     [[ -n "$process_pid" ]] && kill -TERM "$process_pid" 2>/dev/null || true
   done
-}
-
-stop_probe_audio_players() {
-  local remaining_players
-  terminate_processes < <(probe_audio_players)
-  for _ in {1..20}; do
-    remaining_players=$(probe_audio_players)
-    [[ -z "$remaining_players" ]] && return 0
-    sleep 0.1
-  done
-  while IFS= read -r player_pid; do
-    [[ -n "$player_pid" ]] && kill -KILL "$player_pid" 2>/dev/null || true
-  done <<<"$remaining_players"
 }
 
 wait_for_probe_exit() {
@@ -106,30 +81,25 @@ wait_for_probe_exit() {
 }
 
 stop_probe_tree() {
-  [[ -n "$probe_pid" ]] || {
-    stop_probe_audio_players
-    return 0
-  }
-  if ! kill -0 "$probe_pid" 2>/dev/null; then
-    stop_probe_audio_players
-    return 0
-  fi
+  [[ -n "$probe_pid" ]] || return 0
 
+  # Let the probe finish checked teardown after its player stops. The probe
+  # creates its own process group before launching children, so even an
+  # orphaned player remains addressable without matching unrelated playback.
   terminate_processes < <(probe_children)
-  stop_probe_audio_players
-
-  if wait_for_probe_exit 20; then
-    wait "$probe_pid" 2>/dev/null || true
-    stop_probe_audio_players
-    return 0
-  fi
-
-  kill -TERM "$probe_pid" 2>/dev/null || true
   if ! wait_for_probe_exit 20; then
+    kill -TERM "$probe_pid" 2>/dev/null || true
+  fi
+  kill -TERM -- "-$probe_pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    kill -0 -- "-$probe_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -KILL -- "-$probe_pid" 2>/dev/null || true
+  if kill -0 "$probe_pid" 2>/dev/null; then
     kill -KILL "$probe_pid" 2>/dev/null || true
   fi
   wait "$probe_pid" 2>/dev/null || true
-  stop_probe_audio_players
 }
 
 write_runner_failure_result() {
@@ -204,6 +174,7 @@ if wait "$probe_pid"; then
 else
   probe_status=$?
 fi
+stop_probe_tree
 probe_pid=""
 
 test -s "$result"

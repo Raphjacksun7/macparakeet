@@ -36,7 +36,9 @@ already contain any of those managed files; the runner fails instead of
 deleting or reusing earlier evidence. Validation uses macOS's built-in
 `plutil` and `awk`, so `jq` is not required. On deadline, the runner first
 terminates the probe's `afplay` child and gives the Swift process a bounded
-window to execute checked teardown before escalating process termination. A
+window to execute checked teardown before escalating process termination. Cleanup is confined to the probe and
+its private process group, including orphaned children; it never searches for
+unrelated players by WAV filename. A
 deadline or SIGINT/SIGTERM after probe launch always leaves canonical
 `result.json` with `status: FAIL`; any result written after the runner's
 boundary is retained separately for diagnosis and cannot masquerade as the run
@@ -102,3 +104,13 @@ that prevents a subsequent process tap or aggregate device from delivering
 audio fails the next cycle. This adds bounded lifecycle evidence; it does not
 establish long-duration stability or prove that Core Audio has removed every
 internal object immediately after each public destroy call.
+
+## Runner regression checks
+
+`python3 scripts/tests/test_process_tap_runner.py` checks success, timeout,
+SIGTERM, and an orphaned player after a probe crash. It requires Python 3 and
+Xcode command-line tools. Build/sign steps and audio capture are substituted
+with fixtures; real process groups, signals, and result validation are exercised.
+A silent player fixture mimics `afplay` with the same WAV argument in another
+process group, and must survive every cleanup path. These checks do not request
+audio permissions or establish physical capture behavior.
