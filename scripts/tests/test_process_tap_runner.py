@@ -10,27 +10,33 @@ import time
 import unittest
 
 RUNNER = Path(__file__).resolve().parents[1] / "run-process-tap-audio-only-probe.sh"
-PROBE = '''#!/usr/bin/env python3
-import json, os, signal, subprocess, sys, time
-from pathlib import Path
-os.setpgid(0, 0)
-args = dict(zip(sys.argv[1::2], sys.argv[2::2]))
-output = Path(args['--output'])
-child = subprocess.Popen(['/usr/bin/afplay', args['--tone']], executable=os.environ['FIXTURE_PLAYER'])
-(output.parent / 'child.pid').write_text(str(child.pid))
-mode = os.environ['FIXTURE_MODE']
-if mode == 'crash':
-    os._exit(1)
-if mode == 'wait':
-    child.wait()
-    sys.exit(1)
-child.terminate()
-child.wait()
-cycle = dict(teardownVerified=True, capturedFrames=100, rms=0.1, targetAmplitude=0.1)
-output.write_text(json.dumps(dict(schemaVersion=2, microphoneRequested=False,
-    screenPixelsRequested=False, status='PASS', permissionOutcome='process_tap_created',
-    requestedCycles=1, completedCycles=1, capturedFrames=100,
-    minimumCycleRMS=0.1, minimumCycleTargetAmplitude=0.1, cycles=[cycle])))
+PROBE_SOURCE = RUNNER.parent / "process-tap-audio-only-probe.swift"
+PROBE = r'''import Foundation
+import Darwin
+@main enum Fixture {
+    static func main() throws {
+        guard setpgid(0, 0) == 0 else { exit(2) }
+        let args = CommandLine.arguments
+        let output = URL(fileURLWithPath: args[args.firstIndex(of: "--output")! + 1])
+        let tone = args[args.firstIndex(of: "--tone")! + 1]
+        let env = ProcessInfo.processInfo.environment
+        try String(getpid()).write(to: output.deletingLastPathComponent().appendingPathComponent("probe.pid"),
+                                   atomically: true, encoding: .utf8)
+        if env["FIXTURE_MODE"] == "crash" {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { _exit(1) }
+        }
+        do {
+            try playProbeTone(at: tone, executable: env["FIXTURE_PLAYER"]!)
+        } catch { exit(1) }
+        let cycle: [String: Any] = ["teardownVerified": true, "capturedFrames": 100,
+                                   "rms": 0.1, "targetAmplitude": 0.1]
+        let result: [String: Any] = ["schemaVersion": 2, "microphoneRequested": false,
+            "screenPixelsRequested": false, "status": "PASS", "permissionOutcome": "process_tap_created",
+            "requestedCycles": 1, "completedCycles": 1, "capturedFrames": 100,
+            "minimumCycleRMS": 0.1, "minimumCycleTargetAmplitude": 0.1, "cycles": [cycle]]
+        try JSONSerialization.data(withJSONObject: result).write(to: output)
+    }
+}
 '''
 
 
@@ -42,8 +48,17 @@ class RunnerTests(unittest.TestCase):
         # A silent stand-in with the same process name and argv as afplay. This
         # reproduces filename-based cleanup without touching audio hardware.
         subprocess.run(['cc', '-x', 'c', '-', '-o', str(cls.player)],
-                       input='#include <unistd.h>\nint main(void) { sleep(60); return 0; }\n',
+                       input='#include <unistd.h>\n#include <stdlib.h>\n#include <string.h>\n'
+                             'int main(void) { const char *m = getenv("FIXTURE_MODE"); '
+                             'if (m && !strcmp(m, "pass")) usleep(300000); else sleep(60); return 0; }\n',
                        text=True, check=True)
+
+        fixture_source = Path(cls.player_temp.name) / 'Fixture.swift'
+        fixture_source.write_text(PROBE)
+        cls.fixture = Path(cls.player_temp.name) / 'probe'
+        subprocess.run(['swiftc', '-parse-as-library', '-D', 'PROCESS_TAP_PLAYER_TEST',
+                        str(PROBE_SOURCE), str(fixture_source),
+                        '-o', str(cls.fixture)], check=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -55,9 +70,6 @@ class RunnerTests(unittest.TestCase):
         self.output = self.root / 'evidence'
         bindir = self.root / 'bin'
         bindir.mkdir()
-        fixture = self.root / 'probe'
-        fixture.write_text(PROBE)
-        fixture.chmod(0o755)
         # Substitute only build/sign steps; execute the actual shell runner and
         # real process discovery, signals, waits, and result validation.
         for name, body in {
@@ -69,7 +81,7 @@ class RunnerTests(unittest.TestCase):
             path.write_text(body)
             path.chmod(0o755)
         self.env = dict(os.environ, PATH=str(bindir) + ':' + os.environ['PATH'],
-                        FIXTURE_PROBE=str(fixture), FIXTURE_PLAYER=str(self.player), FIXTURE_MODE='pass')
+                        FIXTURE_PROBE=str(self.fixture), FIXTURE_PLAYER=str(self.player), FIXTURE_MODE='pass')
         self.unrelated = subprocess.Popen(
             ['/usr/bin/afplay', str(self.output / 'generated-997hz.wav')], executable=str(self.player))
         self.runner = None
@@ -88,10 +100,13 @@ class RunnerTests(unittest.TestCase):
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def await_child(self):
-        path = self.output / 'child.pid'
+        path = self.output / 'probe.pid'
         for _ in range(100):
             if path.exists() and path.read_text():
-                return int(path.read_text())
+                children = subprocess.run(['/usr/bin/pgrep', '-P', path.read_text()],
+                                          capture_output=True, text=True).stdout.split()
+                if children:
+                    return int(children[0])
             time.sleep(0.05)
         self.fail('fixture never launched child')
 

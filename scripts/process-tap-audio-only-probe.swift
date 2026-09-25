@@ -410,6 +410,32 @@ private func writeResult(_ result: [String: Any], to output: URL) throws {
     try data.write(to: output, options: .atomic)
 }
 
+// posix_spawn with default attributes inherits the probe's process group.
+// Foundation Process creates a separate group on macOS, which would let an
+// orphaned player escape the runner's cleanup boundary.
+func playProbeTone(at path: String, executable: String = "/usr/bin/afplay") throws {
+    let arguments = [executable, path].map { value in value.withCString { strdup($0) } }
+    defer { arguments.forEach { free($0) } }
+    var argv = arguments + [nil]
+    var playerPID: pid_t = 0
+    let status = posix_spawn(&playerPID, arguments[0]!, nil, nil, &argv, environ)
+    guard status == 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(status))
+    }
+    var terminationStatus: Int32 = 0
+    while waitpid(playerPID, &terminationStatus, 0) == -1 {
+        guard errno == EINTR else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+    }
+    // A zero wait status is a normal exit with code zero. Signals and all
+    // nonzero exit codes fail the cycle before its metrics are accepted.
+    guard terminationStatus == 0 else {
+        throw ProbeError.osStatus(stage: "play deterministic tone", status: terminationStatus)
+    }
+}
+
+#if !PROCESS_TAP_PLAYER_TEST
 @main
 private enum Main {
     static func main() {
@@ -465,17 +491,7 @@ private enum Main {
                     try probe.start(targetFrequency: targetFrequency)
                     Thread.sleep(forTimeInterval: 0.25)
 
-                    let player = Process()
-                    player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
-                    player.arguments = [arguments.tone.path]
-                    try player.run()
-                    player.waitUntilExit()
-                    guard player.terminationStatus == 0 else {
-                        throw ProbeError.osStatus(
-                            stage: "play deterministic tone in cycle \(cycle)",
-                            status: OSStatus(player.terminationStatus)
-                        )
-                    }
+                    try playProbeTone(at: arguments.tone.path)
                     Thread.sleep(forTimeInterval: 0.25)
                 } catch {
                     captureFailure = error
@@ -572,3 +588,5 @@ private enum Main {
         }
     }
 }
+
+#endif
